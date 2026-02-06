@@ -1,5 +1,6 @@
 """Tests for meshwiki.meshtastic_bridge — Meshtastic message handling."""
 
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch, call
 import time
 import pytest
@@ -169,3 +170,42 @@ def test_auto_detect_no_port_found_raises(mock_config):
     with patch("meshtastic.util.findPorts", return_value=[]):
         with pytest.raises(ConnectionError, match="Aucun appareil Meshtastic"):
             bridge.connect()
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.get_indexing_eta")
+def test_indexing_in_progress_sends_init_message(mock_eta, mock_config):
+    """When indexation is running, the bridge sends an initialization message instead of processing."""
+    eta = datetime(2025, 6, 15, 14, 30)
+    mock_eta.return_value = eta
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = "!mynode"
+    bridge.interface = MagicMock()
+
+    packet = {"fromId": "!sender", "decoded": {"text": "?Capitale de la France"}}
+    bridge._on_message_received(packet, MagicMock())
+
+    bridge.interface.sendText.assert_called_once_with(
+        "Données en cours d'initialisation. Fin prévue à 14:30.",
+        destinationId="!sender",
+    )
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
+@patch("meshwiki.meshtastic_bridge.rag")
+def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
+    """When no indexation is running, the bridge processes questions normally."""
+    mock_rag.query.return_value = "Paris"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = "!mynode"
+    bridge.interface = MagicMock()
+
+    packet = {"fromId": "!sender", "decoded": {"text": "?Capitale de la France"}}
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query.assert_called_once_with("Capitale de la France")

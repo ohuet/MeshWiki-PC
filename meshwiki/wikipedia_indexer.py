@@ -3,6 +3,9 @@
 import json
 import logging
 import re
+import threading
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import chromadb
@@ -13,6 +16,35 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILE = Path("data/indexing_checkpoint.json")
 
+_indexing_eta: datetime | None = None
+_indexing_lock = threading.Lock()
+
+
+def get_indexing_eta() -> datetime | None:
+    """Return the estimated completion time of an ongoing indexation, or None."""
+    with _indexing_lock:
+        return _indexing_eta
+
+
+def _set_indexing_eta(eta: datetime | None) -> None:
+    """Update the estimated completion time of the current indexation."""
+    global _indexing_eta
+    with _indexing_lock:
+        _indexing_eta = eta
+
+
+def _format_eta(seconds: float) -> str:
+    """Format seconds into a human-readable ETA string."""
+    if seconds < 0:
+        return "?"
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h{minutes:02d}min"
+    if minutes > 0:
+        return f"{minutes}min{secs:02d}s"
+    return f"{secs}s"
+
 
 def _load_config() -> dict:
     with open("config.yaml") as f:
@@ -21,7 +53,7 @@ def _load_config() -> dict:
 
 def _clean_html(html: str) -> str:
     """Extract plain text from HTML, removing tags and extra whitespace."""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
 
     # Remove script and style elements
     for tag in soup(["script", "style"]):
@@ -143,8 +175,9 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
         start_index, article_count, chunk_count = checkpoint
         start_index += 1  # Resume after the last processed entry
         logger.info(
-            "Resuming indexation from entry %d (%d articles, %d chunks already indexed)",
-            start_index, article_count, chunk_count,
+            "Reprise de l'indexation à l'entrée %d/%d (%.1f%%) — %d articles, %d chunks déjà indexés",
+            start_index, archive.entry_count, start_index / archive.entry_count * 100,
+            article_count, chunk_count,
         )
     else:
         start_index = 0
@@ -169,7 +202,10 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     batch_size = 5000
 
     entry_count = archive.entry_count
-    logger.info("ZIM contains %d entries, processing articles...", entry_count)
+    logger.info("Fichier ZIM : %d entrées à parcourir", entry_count)
+
+    start_time = time.monotonic()
+    _set_indexing_eta(datetime.now() + timedelta(hours=1))
 
     for i in range(start_index, entry_count):
         try:
@@ -211,6 +247,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         # Flush batch: encode + insert together
         if len(batch_ids) >= batch_size:
+            logger.info("Encodage et insertion de %d chunks dans ChromaDB...", len(batch_ids))
             batch_embeddings = model.encode(batch_docs).tolist()
             collection.add(
                 ids=batch_ids,
@@ -223,11 +260,25 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         # Progress reporting
         if article_count % 1000 == 0:
-            progress = (i / entry_count) * 100
-            logger.info("Progress: %.1f%% — %d articles, %d chunks", progress, article_count, chunk_count)
+            abs_progress = i / entry_count
+            entries_done = i - start_index
+            elapsed = time.monotonic() - start_time
+            if entries_done > 0:
+                remaining_s = elapsed / entries_done * (entry_count - i)
+                _set_indexing_eta(datetime.now() + timedelta(seconds=remaining_s))
+                eta_dur = _format_eta(remaining_s)
+                eta_time = (datetime.now() + timedelta(seconds=remaining_s)).strftime("%H:%M")
+            else:
+                eta_dur = "?"
+                eta_time = "?"
+            logger.info(
+                "Lecture des articles : %.1f%% — %d articles — reste %s (fin ~%s)",
+                abs_progress * 100, article_count, eta_dur, eta_time,
+            )
 
     # Flush remaining
     if batch_ids:
+        logger.info("Encodage et insertion des %d derniers chunks...", len(batch_ids))
         batch_embeddings = model.encode(batch_docs).tolist()
         collection.add(
             ids=batch_ids,
@@ -240,6 +291,12 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
 
+    _set_indexing_eta(None)
+
+    elapsed = time.monotonic() - start_time
     stats = {"article_count": article_count, "chunk_count": chunk_count}
-    logger.info("Indexing complete: %d articles, %d chunks", article_count, chunk_count)
+    logger.info(
+        "Indexation terminée : %d articles, %d chunks en %s",
+        article_count, chunk_count, _format_eta(elapsed),
+    )
     return stats

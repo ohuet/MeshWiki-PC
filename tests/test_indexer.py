@@ -1,12 +1,14 @@
 """Tests for meshwiki.wikipedia_indexer — ZIM indexation into ChromaDB."""
 
 import json
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
 
 from meshwiki.wikipedia_indexer import (
     _clean_html, _chunk_text, _is_content_article,
     _load_checkpoint, _save_checkpoint, CHECKPOINT_FILE,
+    get_indexing_eta, _set_indexing_eta,
 )
 
 
@@ -254,3 +256,26 @@ def test_index_zim_deletes_checkpoint_on_completion(
         index_zim(Path("test.zim"), "test_col")
 
     mock_cp_file.unlink.assert_called_once()
+
+
+def test_get_indexing_eta_default_is_none():
+    """get_indexing_eta() returns None when no indexation is in progress."""
+    _set_indexing_eta(None)
+    assert get_indexing_eta() is None
+
+
+def test_set_indexing_eta_updates_value():
+    """_set_indexing_eta() stores the ETA and get_indexing_eta() retrieves it."""
+    eta = datetime.now() + timedelta(hours=1)
+    _set_indexing_eta(eta)
+    assert get_indexing_eta() == eta
+    # Cleanup
+    _set_indexing_eta(None)
+
+
+def test_set_indexing_eta_clear():
+    """Setting ETA to None clears it."""
+    _set_indexing_eta(datetime.now() + timedelta(minutes=30))
+    assert get_indexing_eta() is not None
+    _set_indexing_eta(None)
+    assert get_indexing_eta() is None

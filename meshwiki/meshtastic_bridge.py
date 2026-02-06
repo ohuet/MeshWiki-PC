@@ -9,6 +9,7 @@ from pubsub import pub
 
 from meshwiki.chunker import split_message
 from meshwiki.rate_limiter import RateLimiter
+from meshwiki.wikipedia_indexer import get_indexing_eta
 from meshwiki import rag
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,13 @@ class MeshtasticBridge:
             return
 
         logger.info("Question from %s: %s", sender, question)
+
+        # Check if indexation is in progress
+        eta = get_indexing_eta()
+        if eta is not None:
+            eta_str = eta.strftime("%H:%M")
+            self.send_response(sender, f"Données en cours d'initialisation. Fin prévue à {eta_str}.")
+            return
 
         # Check rate limit
         allowed, denial_msg = self.rate_limiter.check(str(sender))

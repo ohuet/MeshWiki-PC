@@ -129,22 +129,6 @@ def main() -> None:
         logger.warning("Ollama n'est pas accessible à %s", config["ollama"]["base_url"])
         logger.warning("Le service démarrera mais les réponses LLM ne fonctionneront pas.")
 
-    # Check/create index
-    if not _index_exists(config):
-        logger.info("Aucune base Wikipedia trouvée. Téléchargement initial en cours...")
-        updater = WikipediaUpdater()
-        updater.run_update()
-
-        if not _index_exists(config):
-            logger.error("Impossible de créer l'index Wikipedia. Vérifiez votre connexion internet.")
-            sys.exit(1)
-    else:
-        # Check for background update
-        if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
-            if _is_update_due(config):
-                logger.info("Mise à jour planifiée, lancement en arrière-plan...")
-                _run_background_update(config)
-
     # Initialize rate limiter
     rl_config = config["rate_limiting"]
     rate_limiter = RateLimiter(
@@ -154,6 +138,17 @@ def main() -> None:
 
     # Connect to Meshtastic
     bridge = MeshtasticBridge(rate_limiter)
+
+    # Check/create index
+    if not _index_exists(config):
+        logger.info("Aucune base Wikipedia trouvée. Téléchargement initial en arrière-plan...")
+        _run_background_update(config)
+    else:
+        # Check for background update
+        if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
+            if _is_update_due(config):
+                logger.info("Mise à jour planifiée, lancement en arrière-plan...")
+                _run_background_update(config)
 
     # Graceful shutdown
     stop_event = None
