@@ -3,6 +3,7 @@
 import logging
 import time
 import threading
+from datetime import datetime, timezone
 
 import yaml
 from pubsub import pub
@@ -101,8 +102,14 @@ class MeshtasticBridge:
         # Check if indexation is in progress
         eta = get_indexing_eta()
         if eta is not None:
-            eta_str = eta.strftime("%H:%M")
+            remaining = eta - datetime.now(eta.tzinfo)
+            remaining_min = max(1, int(remaining.total_seconds() / 60))
+            if remaining_min >= 60:
+                eta_str = f"environ {remaining_min // 60}h{remaining_min % 60:02d}"
+            else:
+                eta_str = f"environ {remaining_min}min"
             answer = rag.query_without_context(question, eta_str)
+            logger.info("Answer to %s (fallback): %s", sender, answer)
             self.send_response(sender, answer)
             return
 

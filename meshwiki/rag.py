@@ -20,11 +20,11 @@ Si les extraits ne contiennent pas la réponse, dis-le clairement.
 Ne fabrique JAMAIS d'information."""
 
 SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
-La base Wikipedia est en cours d'initialisation ({eta}).
+La base Wikipedia est en cours d'initialisation (temps restant : {eta}).
 Tu ne disposes PAS d'extraits Wikipedia pour le moment.
 Réponds du mieux possible avec tes connaissances générales.
-Précise que ta réponse est sans source Wikipedia et pourrait être imprécise.
-Sois concis (max 400 caractères, transmission radio)."""
+Termine ta réponse par : "[Sans source Wikipedia — base disponible dans {eta}]"
+Ta réponse doit faire une ou deux phrases, max 400 caractères (transmission radio)."""
 
 _model = None
 _collection = None
