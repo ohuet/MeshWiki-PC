@@ -33,6 +33,38 @@ def _delete_collection_safe(client, name: str) -> None:
         pass
 
 
+def _copy_collection(client, source_name: str, dest_name: str, batch_size: int = 10000) -> None:
+    """Copy all data from one ChromaDB collection to another.
+
+    Creates the destination collection and copies embeddings, documents,
+    and metadatas in batches. Much faster than re-encoding from scratch.
+    """
+    source = client.get_collection(source_name)
+    dest = client.get_or_create_collection(
+        name=dest_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    offset = 0
+    while True:
+        results = source.get(
+            limit=batch_size,
+            offset=offset,
+            include=["embeddings", "documents", "metadatas"],
+        )
+        ids = results["ids"]
+        if not ids:
+            break
+        dest.add(
+            ids=ids,
+            embeddings=results["embeddings"],
+            documents=results["documents"],
+            metadatas=results["metadatas"],
+        )
+        offset += len(ids)
+        logger.info("Copie de la collection : %d documents copiés", offset)
+
+
 class WikipediaUpdater:
     """Handles Wikipedia dump download, indexation, and safe collection swap."""
 
@@ -133,9 +165,10 @@ class WikipediaUpdater:
 
         Strategy:
         1. Index into TEMP_COLLECTION ("wikipedia_new")
-        2. On success: delete ACTIVE_COLLECTION, re-index into ACTIVE_COLLECTION
-           (The old collection serves as implicit backup until deleted)
-        3. On failure: delete TEMP_COLLECTION, old index stays intact
+        2. Validate article_count > 0
+        3. Delete ACTIVE_COLLECTION, copy TEMP → ACTIVE (no re-encoding)
+        4. Delete TEMP_COLLECTION
+        On failure: delete TEMP_COLLECTION, old index stays intact.
 
         Returns True on success, False on failure.
         """
@@ -153,13 +186,11 @@ class WikipediaUpdater:
                 _delete_collection_safe(client, TEMP_COLLECTION)
                 return False
 
-            # Step 2: Temp succeeded — now replace the active collection
+            # Step 2: Replace active collection by copying from temp
             logger.info("Temp index OK (%d articles). Replacing active index...", stats["article_count"])
             _delete_collection_safe(client, ACTIVE_COLLECTION)
+            _copy_collection(client, TEMP_COLLECTION, ACTIVE_COLLECTION)
             _delete_collection_safe(client, TEMP_COLLECTION)
-
-            # Re-index directly into the active collection
-            stats = index_zim(zim_path, collection_name=ACTIVE_COLLECTION)
 
             # Update tracking file
             LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)

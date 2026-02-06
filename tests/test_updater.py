@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 
 import meshwiki.wikipedia_updater as updater_module
-from meshwiki.wikipedia_updater import WikipediaUpdater
+from meshwiki.wikipedia_updater import WikipediaUpdater, _copy_collection
 
 
 MOCK_CONFIG = {
@@ -99,8 +99,9 @@ def test_download_dump_returns_none_when_no_url(mock_config):
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.index_zim")
+@patch("meshwiki.wikipedia_updater._copy_collection")
 @patch("meshwiki.wikipedia_updater.chromadb")
-def test_reindex_success(mock_chromadb, mock_index_zim, mock_config):
+def test_reindex_success(mock_chromadb, mock_copy, mock_index_zim, mock_config):
     mock_index_zim.return_value = {"article_count": 100, "chunk_count": 500}
     mock_client = MagicMock()
     mock_chromadb.PersistentClient.return_value = mock_client
@@ -113,8 +114,10 @@ def test_reindex_success(mock_chromadb, mock_index_zim, mock_config):
         result = updater.reindex(zim_path)
 
     assert result is True
-    # index_zim should be called twice: once for temp, once for active
-    assert mock_index_zim.call_count == 2
+    # index_zim should be called once (temp only), then data is copied
+    assert mock_index_zim.call_count == 1
+    mock_index_zim.assert_called_once_with(zim_path, collection_name="wikipedia_new")
+    mock_copy.assert_called_once_with(mock_client, "wikipedia_new", "wikipedia")
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
@@ -156,3 +159,66 @@ def test_cleanup_removes_temp_files(mock_config, tmp_path):
     updater.cleanup(MagicMock(exists=lambda: False))
 
     assert not list(temp_dir.iterdir())
+
+
+def test_copy_collection_copies_all_data():
+    """_copy_collection transfers all documents from source to dest in batches."""
+    mock_client = MagicMock()
+
+    # Source collection returns 2 batches then empty
+    mock_source = MagicMock()
+    mock_source.get.side_effect = [
+        {
+            "ids": ["id1", "id2"],
+            "embeddings": [[0.1, 0.2], [0.3, 0.4]],
+            "documents": ["doc1", "doc2"],
+            "metadatas": [{"title": "A"}, {"title": "B"}],
+        },
+        {
+            "ids": ["id3"],
+            "embeddings": [[0.5, 0.6]],
+            "documents": ["doc3"],
+            "metadatas": [{"title": "C"}],
+        },
+        {
+            "ids": [],
+            "embeddings": [],
+            "documents": [],
+            "metadatas": [],
+        },
+    ]
+    mock_dest = MagicMock()
+
+    mock_client.get_collection.return_value = mock_source
+    mock_client.get_or_create_collection.return_value = mock_dest
+
+    _copy_collection(mock_client, "source", "dest", batch_size=2)
+
+    assert mock_dest.add.call_count == 2
+    # First batch
+    first_call = mock_dest.add.call_args_list[0]
+    assert first_call[1]["ids"] == ["id1", "id2"]
+    # Second batch
+    second_call = mock_dest.add.call_args_list[1]
+    assert second_call[1]["ids"] == ["id3"]
+
+
+def test_copy_collection_handles_empty_source():
+    """_copy_collection does nothing when source is empty."""
+    mock_client = MagicMock()
+
+    mock_source = MagicMock()
+    mock_source.get.return_value = {
+        "ids": [],
+        "embeddings": [],
+        "documents": [],
+        "metadatas": [],
+    }
+    mock_dest = MagicMock()
+
+    mock_client.get_collection.return_value = mock_source
+    mock_client.get_or_create_collection.return_value = mock_dest
+
+    _copy_collection(mock_client, "source", "dest")
+
+    mock_dest.add.assert_not_called()
