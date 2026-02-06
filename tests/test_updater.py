@@ -132,8 +132,9 @@ def test_reindex_failure_preserves_old_index(mock_chromadb, mock_index_zim, mock
     result = updater.reindex(MagicMock(spec=Path))
 
     assert result is False
-    # Temp collection should be cleaned up
-    mock_client.delete_collection.assert_called()
+    # Temp collection is NOT deleted on failure (checkpoint + collection
+    # must stay in sync for safe resume after interruption)
+    mock_client.delete_collection.assert_not_called()
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)

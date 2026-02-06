@@ -167,14 +167,20 @@ def _load_checkpoint(collection_name: str, zim_path: Path) -> tuple[int, int, in
             return None
 
     if not CHECKPOINT_FILE.exists():
+        logger.info("Pas de checkpoint trouvé (%s n'existe pas)", CHECKPOINT_FILE)
         return None
     try:
         data = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
         if (data["collection_name"] == collection_name
                 and data["zim_filename"] == Path(zim_path).name):
             return (data["last_entry_index"], data["article_count"], data["chunk_count"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        pass
+        logger.info(
+            "Checkpoint ignoré (collection=%s vs %s, zim=%s vs %s)",
+            data.get("collection_name"), collection_name,
+            data.get("zim_filename"), Path(zim_path).name,
+        )
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning("Checkpoint corrompu (%s), ignoré", e)
     return None
 
 

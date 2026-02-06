@@ -206,8 +206,12 @@ class WikipediaUpdater:
             return True
 
         except Exception as e:
+            # Don't delete the temp collection here: on Windows, Python
+            # interpreter shutdown can raise exceptions in daemon threads
+            # (module globals set to None). Deleting the collection while
+            # the checkpoint file survives causes data loss on resume.
+            # The collection and checkpoint stay in sync for safe resume.
             logger.error("Reindexation failed: %s", e)
-            _delete_collection_safe(client, TEMP_COLLECTION)
             return False
 
     def cleanup(self, zim_path: Path) -> None:
