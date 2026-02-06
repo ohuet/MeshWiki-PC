@@ -9,6 +9,7 @@ from meshwiki.wikipedia_indexer import (
     _clean_html, _chunk_text, _is_content_article,
     _load_checkpoint, _save_checkpoint, CHECKPOINT_FILE,
     get_indexing_eta, _set_indexing_eta,
+    _gpu_lock_clocks, _gpu_unlock_clocks,
 )
 
 
@@ -279,3 +280,34 @@ def test_set_indexing_eta_clear():
     assert get_indexing_eta() is not None
     _set_indexing_eta(None)
     assert get_indexing_eta() is None
+
+
+@patch("meshwiki.wikipedia_indexer.subprocess.run")
+def test_gpu_lock_clocks_success(mock_run):
+    """Lock returns True when nvidia-smi succeeds."""
+    assert _gpu_lock_clocks() is True
+    assert mock_run.call_count == 2
+    # First call: persistence mode
+    assert mock_run.call_args_list[0][0][0] == ["nvidia-smi", "-pm", "1"]
+    # Second call: lock clocks
+    assert "--lock-gpu-clocks=300,9999" in mock_run.call_args_list[1][0][0]
+
+
+@patch("meshwiki.wikipedia_indexer.subprocess.run", side_effect=FileNotFoundError)
+def test_gpu_lock_clocks_no_nvidia_smi(mock_run):
+    """Lock returns False when nvidia-smi is not found."""
+    assert _gpu_lock_clocks() is False
+
+
+@patch("meshwiki.wikipedia_indexer.subprocess.run")
+def test_gpu_unlock_clocks(mock_run):
+    """Unlock calls nvidia-smi to reset clocks."""
+    _gpu_unlock_clocks()
+    assert mock_run.call_count == 2
+    assert "--reset-gpu-clocks" in mock_run.call_args_list[0][0][0]
+
+
+@patch("meshwiki.wikipedia_indexer.subprocess.run", side_effect=FileNotFoundError)
+def test_gpu_unlock_clocks_no_nvidia_smi(mock_run):
+    """Unlock does not raise when nvidia-smi is not found."""
+    _gpu_unlock_clocks()  # Should not raise

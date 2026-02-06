@@ -4,6 +4,7 @@ import json
 import logging
 import queue
 import re
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
@@ -47,6 +48,42 @@ def _format_eta(seconds: float) -> str:
     if minutes > 0:
         return f"{minutes}min{secs:02d}s"
     return f"{secs}s"
+
+
+def _gpu_lock_clocks() -> bool:
+    """Lock GPU clocks to max performance to prevent sleep throttling.
+
+    Returns True if clocks were successfully locked.
+    """
+    try:
+        subprocess.run(
+            ["nvidia-smi", "-pm", "1"],
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["nvidia-smi", "--lock-gpu-clocks=300,9999"],
+            capture_output=True, check=True,
+        )
+        logger.info("GPU clocks locked to max performance")
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+def _gpu_unlock_clocks() -> None:
+    """Release GPU clock lock."""
+    try:
+        subprocess.run(
+            ["nvidia-smi", "--reset-gpu-clocks"],
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["nvidia-smi", "-pm", "0"],
+            capture_output=True, check=True,
+        )
+        logger.info("GPU clocks unlocked")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
 
 
 def _load_config() -> dict:
@@ -210,6 +247,8 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     start_time = time.monotonic()
     _set_indexing_eta(datetime.now() + timedelta(hours=1))
 
+    gpu_locked = _gpu_lock_clocks()
+
     progress = ProgressDisplay()
     progress.start()
 
@@ -321,6 +360,8 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
         CHECKPOINT_FILE.unlink()
 
     progress.stop()
+    if gpu_locked:
+        _gpu_unlock_clocks()
     _set_indexing_eta(None)
 
     elapsed = time.monotonic() - start_time
