@@ -24,7 +24,9 @@ vectordb:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "phi4-mini:3.8b"            # ou phi3:mini, llama3, mixtral...
+  #model: "phi4-mini:3.8b"
+  #model: "qwen2.5:3b"                # ou phi4-mini:3.8b, mistral, llama3...
+  model: "mistral:7b"
   temperature: 0.1
   max_tokens: 300
 
