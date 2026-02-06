@@ -78,14 +78,21 @@ class MeshtasticBridge:
         text = packet.get("decoded", {}).get("text", "")
 
         # Ignore our own messages
-        if sender == self.my_node_id:
+        if packet.get("from") == self.my_node_id:
             return
 
+        # Direct messages: treat full text as question
+        # Broadcasts: require trigger prefix
+        is_direct = packet.get("to") == self.my_node_id
         prefix = self.mesh_config["trigger_prefix"]
-        if not text.startswith(prefix):
+
+        if is_direct:
+            question = text.removeprefix(prefix).strip()
+        elif text.startswith(prefix):
+            question = text[len(prefix):].strip()
+        else:
             return
 
-        question = text[len(prefix):].strip()
         if not question:
             return
 

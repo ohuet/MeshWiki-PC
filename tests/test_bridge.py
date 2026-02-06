@@ -10,6 +10,10 @@ from meshwiki.meshtastic_bridge import MeshtasticBridge
 from meshwiki.rate_limiter import RateLimiter
 
 
+MY_NODE_NUM = 957304120
+OTHER_NODE_NUM = 3506839865
+BROADCAST = 4294967295  # 0xFFFFFFFF = ^all
+
 MOCK_CONFIG = {
     "meshtastic": {
         "connection": "serial",
@@ -32,27 +36,39 @@ MOCK_CONFIG_NO_PORT = {
 }
 
 
+def _make_packet(text, from_node=OTHER_NODE_NUM, to_node=MY_NODE_NUM):
+    """Helper to build a Meshtastic-like packet dict."""
+    return {
+        "from": from_node,
+        "to": to_node,
+        "fromId": f"!{from_node:08x}",
+        "toId": f"!{to_node:08x}" if to_node != BROADCAST else "^all",
+        "decoded": {"text": text},
+    }
+
+
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
 def test_ignores_own_messages(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!mynode", "decoded": {"text": "?Test"}}
+    packet = _make_packet("Test", from_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
     bridge.interface.sendText.assert_not_called()
 
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
-def test_ignores_messages_without_prefix(mock_config):
+def test_ignores_broadcast_without_prefix(mock_config):
+    """Broadcast messages without trigger prefix are ignored."""
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!other", "decoded": {"text": "Hello world"}}
+    packet = _make_packet("Hello world", to_node=BROADCAST)
     bridge._on_message_received(packet, MagicMock())
 
     bridge.interface.sendText.assert_not_called()
@@ -60,19 +76,59 @@ def test_ignores_messages_without_prefix(mock_config):
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.rag")
-def test_processes_valid_question(mock_rag, mock_config):
+def test_broadcast_with_prefix_is_processed(mock_rag, mock_config):
+    """Broadcast messages with trigger prefix are processed."""
     mock_rag.query.return_value = "Paris"
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!sender", "decoded": {"text": "?Capitale de la France"}}
+    packet = _make_packet("?Capitale de la France", to_node=BROADCAST)
     bridge._on_message_received(packet, MagicMock())
 
     mock_rag.query.assert_called_once_with("Capitale de la France")
-    bridge.interface.sendText.assert_called_once_with("Paris", destinationId="!sender")
+    bridge.interface.sendText.assert_called_once_with(
+        "Paris", destinationId=f"!{OTHER_NODE_NUM:08x}",
+    )
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.rag")
+def test_direct_message_no_prefix(mock_rag, mock_config):
+    """Direct messages are processed without requiring a prefix."""
+    mock_rag.query.return_value = "Paris"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query.assert_called_once_with("Capitale de la France")
+    bridge.interface.sendText.assert_called_once_with(
+        "Paris", destinationId=f"!{OTHER_NODE_NUM:08x}",
+    )
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.rag")
+def test_direct_message_with_prefix_strips_it(mock_rag, mock_config):
+    """Direct messages with prefix still work — prefix is stripped."""
+    mock_rag.query.return_value = "Paris"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("?Capitale de la France", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query.assert_called_once_with("Capitale de la France")
 
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
@@ -80,17 +136,17 @@ def test_rate_limiting_sends_denial(mock_config):
     limiter = RateLimiter(max_requests=1, window_seconds=60)
 
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
     # First request: allowed
     with patch("meshwiki.meshtastic_bridge.rag") as mock_rag:
         mock_rag.query.return_value = "OK"
-        packet = {"fromId": "!sender", "decoded": {"text": "?Q1"}}
+        packet = _make_packet("Q1", to_node=MY_NODE_NUM)
         bridge._on_message_received(packet, MagicMock())
 
     # Second request: rate limited
-    packet = {"fromId": "!sender", "decoded": {"text": "?Q2"}}
+    packet = _make_packet("Q2", to_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
     # Second call should send denial
@@ -135,10 +191,15 @@ def test_send_response_short_text_no_chunking(mock_config):
 def test_ignores_empty_question(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!sender", "decoded": {"text": "?"}}
+    # DM with empty text
+    packet = _make_packet("", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    # Broadcast with just prefix
+    packet = _make_packet("?", to_node=BROADCAST)
     bridge._on_message_received(packet, MagicMock())
 
     bridge.interface.sendText.assert_not_called()
@@ -151,7 +212,7 @@ def test_auto_detect_serial_port(mock_config):
     bridge = MeshtasticBridge(limiter)
 
     mock_iface = MagicMock()
-    mock_iface.myInfo.get.return_value = "!node1"
+    mock_iface.myInfo.my_node_num = MY_NODE_NUM
 
     with patch("meshtastic.util.findPorts", return_value=["/dev/ttyACM0", "/dev/ttyACM1"]) as mock_find, \
          patch("meshtastic.serial_interface.SerialInterface", return_value=mock_iface):
@@ -181,15 +242,15 @@ def test_indexing_in_progress_sends_init_message(mock_eta, mock_config):
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!sender", "decoded": {"text": "?Capitale de la France"}}
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
     bridge.interface.sendText.assert_called_once_with(
         "Données en cours d'initialisation. Fin prévue à 14:30.",
-        destinationId="!sender",
+        destinationId=f"!{OTHER_NODE_NUM:08x}",
     )
 
 
@@ -202,10 +263,10 @@ def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
-    bridge.my_node_id = "!mynode"
+    bridge.my_node_id = MY_NODE_NUM
     bridge.interface = MagicMock()
 
-    packet = {"fromId": "!sender", "decoded": {"text": "?Capitale de la France"}}
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
     mock_rag.query.assert_called_once_with("Capitale de la France")
