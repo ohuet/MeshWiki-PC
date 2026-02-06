@@ -118,3 +118,21 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
     user_prompt = mock_llm.generate.call_args[0][1]
     assert "[Madagascar]" in user_prompt
     assert "Antananarivo" in user_prompt
+
+
+@patch("meshwiki.rag.llm")
+def test_query_without_context_calls_llm(mock_llm):
+    """query_without_context() calls LLM with ETA in system prompt and the question."""
+    mock_llm.generate.return_value = "Réponse sans Wikipedia"
+
+    result = rag_module.query_without_context("Capitale de la France ?", "14:30")
+
+    assert result == "Réponse sans Wikipedia"
+    mock_llm.generate.assert_called_once()
+
+    call_args = mock_llm.generate.call_args
+    system_prompt = call_args[0][0]
+    user_prompt = call_args[0][1]
+    assert "14:30" in system_prompt
+    assert "initialisation" in system_prompt
+    assert "Capitale de la France ?" in user_prompt

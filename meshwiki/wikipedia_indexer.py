@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import chromadb
 import yaml
@@ -217,6 +218,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     from sentence_transformers import SentenceTransformer
 
     config = _load_config()
+    tz = ZoneInfo(config.get("meshtastic_timezone", "UTC"))
     embeddings_config = config["embeddings"]
     vectordb_path = config["vectordb"]["path"]
 
@@ -261,7 +263,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     logger.info("Fichier ZIM : %d entrées à parcourir", entry_count)
 
     start_time = time.monotonic()
-    _set_indexing_eta(datetime.now() + timedelta(hours=1))
+    _set_indexing_eta(datetime.now(tz) + timedelta(hours=1))
 
     gpu_locked = _gpu_lock_clocks()
 
@@ -324,7 +326,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                     elapsed = time.monotonic() - start_time
                     if entries_done > 0:
                         remaining_s = elapsed / entries_done * (entry_count - i)
-                        _set_indexing_eta(datetime.now() + timedelta(seconds=remaining_s))
+                        _set_indexing_eta(datetime.now(tz) + timedelta(seconds=remaining_s))
                         eta_dur = _format_eta(remaining_s)
                         eta_time = (datetime.now() + timedelta(seconds=remaining_s)).strftime("%H:%M")
                     else:

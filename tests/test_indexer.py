@@ -1,9 +1,10 @@
 """Tests for meshwiki.wikipedia_indexer — ZIM indexation into ChromaDB."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from meshwiki.wikipedia_indexer import (
     _clean_html, _chunk_text, _is_content_article,
@@ -343,3 +344,36 @@ def test_load_checkpoint_recovers_from_tmp(tmp_path):
     assert result == (100, 50, 200)
     assert cp_file.exists()
     assert not tmp_file.exists()
+
+
+@patch("meshwiki.wikipedia_indexer._load_config")
+@patch("meshwiki.wikipedia_indexer.chromadb")
+@patch("meshwiki.wikipedia_indexer._set_indexing_eta")
+def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config):
+    """ETA stored by index_zim uses the timezone from config (Indian/Reunion = UTC+4)."""
+    mock_config.return_value = {
+        "meshtastic_timezone": "Indian/Reunion",
+        "embeddings": {"model": "test-model", "chunk_size": 50, "chunk_overlap": 10},
+        "vectordb": {"path": "./test_db"},
+    }
+
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_client.get_or_create_collection.return_value = mock_collection
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 384])
+
+    mock_archive = MagicMock()
+    mock_archive.entry_count = 0  # No entries — just check the initial ETA
+
+    with patch("libzim.reader.Archive", return_value=mock_archive), \
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+        from meshwiki.wikipedia_indexer import index_zim
+        index_zim(Path("test.zim"), "test_tz_col")
+
+    # First call sets the initial ETA (datetime.now(tz) + 1h), last call clears it (None)
+    initial_eta = mock_set_eta.call_args_list[0][0][0]
+    assert initial_eta.tzinfo is not None
+    assert initial_eta.utcoffset() == timedelta(hours=4)

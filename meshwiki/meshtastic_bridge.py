@@ -102,7 +102,8 @@ class MeshtasticBridge:
         eta = get_indexing_eta()
         if eta is not None:
             eta_str = eta.strftime("%H:%M")
-            self.send_response(sender, f"Données en cours d'initialisation. Fin prévue à {eta_str}.")
+            answer = rag.query_without_context(question, eta_str)
+            self.send_response(sender, answer)
             return
 
         # Check rate limit

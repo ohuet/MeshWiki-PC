@@ -19,6 +19,13 @@ Tes réponses doivent être :
 Si les extraits ne contiennent pas la réponse, dis-le clairement.
 Ne fabrique JAMAIS d'information."""
 
+SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
+La base Wikipedia est en cours d'initialisation ({eta}).
+Tu ne disposes PAS d'extraits Wikipedia pour le moment.
+Réponds du mieux possible avec tes connaissances générales.
+Précise que ta réponse est sans source Wikipedia et pourrait être imprécise.
+Sois concis (max 400 caractères, transmission radio)."""
+
 _model = None
 _collection = None
 
@@ -90,3 +97,10 @@ Question : {question}
 Réponds de façon concise."""
 
     return llm.generate(SYSTEM_PROMPT, user_prompt)
+
+
+def query_without_context(question: str, eta_str: str) -> str:
+    """Answer a question without Wikipedia context (during indexation)."""
+    system = SYSTEM_PROMPT_NO_INDEX.format(eta=eta_str)
+    user_prompt = f"Question : {question}\n\nRéponds de façon concise."
+    return llm.generate(system, user_prompt)

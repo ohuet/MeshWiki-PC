@@ -234,11 +234,13 @@ def test_auto_detect_no_port_found_raises(mock_config):
 
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta")
-def test_indexing_in_progress_sends_init_message(mock_eta, mock_config):
-    """When indexation is running, the bridge sends an initialization message instead of processing."""
+def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_config):
+    """When indexation is running, the bridge calls LLM fallback instead of static message."""
     eta = datetime(2025, 6, 15, 14, 30)
     mock_eta.return_value = eta
+    mock_rag.query_without_context.return_value = "Réponse sans Wikipedia"
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -248,8 +250,10 @@ def test_indexing_in_progress_sends_init_message(mock_eta, mock_config):
     packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
+    mock_rag.query_without_context.assert_called_once_with("Capitale de la France", "14:30")
+    mock_rag.query.assert_not_called()
     bridge.interface.sendText.assert_called_once_with(
-        "Données en cours d'initialisation. Fin prévue à 14:30.",
+        "Réponse sans Wikipedia",
         destinationId=f"!{OTHER_NODE_NUM:08x}",
     )
 
