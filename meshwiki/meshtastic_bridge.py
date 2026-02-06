@@ -57,9 +57,20 @@ class MeshtasticBridge:
         else:
             raise ValueError(f"Unknown connection type: {connection_type}")
 
-        self.my_node_id = self.interface.myInfo.get("my_node_num")
+        self.my_node_id = self.interface.myInfo.my_node_num
         pub.subscribe(self._on_message_received, "meshtastic.receive.text")
-        logger.info("Connected to Meshtastic (node %s)", self.my_node_id)
+        logger.info(
+            "Connected to Meshtastic: %s (%s) — node %s",
+            self.interface.getLongName(),
+            self.interface.getShortName(),
+            self.my_node_id,
+        )
+        if self.interface.metadata:
+            md = self.interface.metadata
+            logger.info(
+                "Module: %s — firmware %s",
+                md.hw_model, md.firmware_version,
+            )
 
     def _on_message_received(self, packet, interface) -> None:
         """Handle incoming text messages."""
@@ -137,7 +148,12 @@ class MeshtasticBridge:
                     self.connect()
                 time.sleep(1)
             except Exception as e:
-                logger.error("Connection lost: %s. Retrying in 30s...", e)
+                logger.exception("Connection lost. Retrying in 30s...")
+                if self.interface:
+                    try:
+                        self.interface.close()
+                    except Exception:
+                        pass
                 self.interface = None
                 time.sleep(30)
 

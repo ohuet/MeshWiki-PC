@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -21,6 +22,26 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+LOCK_FILE = Path("data/meshwiki.lock")
+_lock_fd = None
+
+
+def _check_already_running() -> None:
+    """Exit if another MeshWiki instance is already running (OS-level file lock)."""
+    global _lock_fd
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _lock_fd = open(LOCK_FILE, "w")
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        logger.error("MeshWiki est déjà en cours d'exécution")
+        sys.exit(1)
 
 
 def _load_config() -> dict:
@@ -116,6 +137,7 @@ def _start_update_scheduler(config: dict) -> threading.Event:
 def main() -> None:
     """Main entry point for MeshWiki."""
     logger.info("Démarrage de MeshWiki...")
+    _check_already_running()
 
     # Load configuration
     try:
