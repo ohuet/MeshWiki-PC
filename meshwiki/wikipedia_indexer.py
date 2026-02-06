@@ -153,8 +153,18 @@ def _is_content_article(entry) -> bool:
 def _load_checkpoint(collection_name: str, zim_path: Path) -> tuple[int, int, int] | None:
     """Load a checkpoint file if it matches the current collection and ZIM file.
 
+    Also recovers from a .tmp file left by an interrupted atomic write.
     Returns (last_entry_index, article_count, chunk_count) or None.
     """
+    tmp = CHECKPOINT_FILE.with_suffix(".tmp")
+
+    # Recover from interrupted atomic write: .tmp exists but .json doesn't
+    if not CHECKPOINT_FILE.exists() and tmp.exists():
+        try:
+            tmp.replace(CHECKPOINT_FILE)
+        except OSError:
+            return None
+
     if not CHECKPOINT_FILE.exists():
         return None
     try:
@@ -174,9 +184,14 @@ def _save_checkpoint(
     article_count: int,
     chunk_count: int,
 ) -> None:
-    """Save indexing progress to checkpoint file."""
+    """Save indexing progress to checkpoint file atomically.
+
+    Writes to a temporary file first, then renames to avoid corruption
+    if the process is interrupted during the write.
+    """
     CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT_FILE.write_text(
+    tmp = CHECKPOINT_FILE.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps({
             "collection_name": collection_name,
             "zim_filename": Path(zim_path).name,
@@ -186,6 +201,7 @@ def _save_checkpoint(
         }),
         encoding="utf-8",
     )
+    tmp.replace(CHECKPOINT_FILE)
 
 
 def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:

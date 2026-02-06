@@ -311,3 +311,35 @@ def test_gpu_unlock_clocks(mock_run):
 def test_gpu_unlock_clocks_no_nvidia_smi(mock_run):
     """Unlock does not raise when nvidia-smi is not found."""
     _gpu_unlock_clocks()  # Should not raise
+
+
+def test_save_checkpoint_atomic(tmp_path):
+    """Checkpoint is written atomically via a temp file."""
+    cp_file = tmp_path / "checkpoint.json"
+    with patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", cp_file):
+        _save_checkpoint("wiki", Path("test.zim"), 100, 50, 200)
+    assert cp_file.exists()
+    assert not cp_file.with_suffix(".tmp").exists()
+    data = json.loads(cp_file.read_text(encoding="utf-8"))
+    assert data["last_entry_index"] == 100
+    assert data["article_count"] == 50
+    assert data["chunk_count"] == 200
+
+
+def test_load_checkpoint_recovers_from_tmp(tmp_path):
+    """If .json is missing but .tmp exists, recover from .tmp."""
+    cp_file = tmp_path / "checkpoint.json"
+    tmp_file = cp_file.with_suffix(".tmp")
+    tmp_file.write_text(json.dumps({
+        "collection_name": "wiki",
+        "zim_filename": "test.zim",
+        "last_entry_index": 100,
+        "article_count": 50,
+        "chunk_count": 200,
+    }), encoding="utf-8")
+    assert not cp_file.exists()
+    with patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", cp_file):
+        result = _load_checkpoint("wiki", Path("test.zim"))
+    assert result == (100, 50, 200)
+    assert cp_file.exists()
+    assert not tmp_file.exists()
