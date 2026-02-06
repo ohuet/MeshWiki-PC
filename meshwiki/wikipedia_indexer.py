@@ -13,6 +13,8 @@ import chromadb
 import yaml
 from lxml import html as lxml_html
 
+from meshwiki.progress import ProgressDisplay
+
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILE = Path("data/indexing_checkpoint.json")
@@ -208,6 +210,9 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     start_time = time.monotonic()
     _set_indexing_eta(datetime.now() + timedelta(hours=1))
 
+    progress = ProgressDisplay()
+    progress.start()
+
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
     def _producer():
         nonlocal article_count, chunk_count
@@ -270,10 +275,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                     else:
                         eta_dur = "?"
                         eta_time = "?"
-                    logger.info(
-                        "Lecture des articles : %.1f%% — %d articles — reste %s (fin ~%s)",
-                        abs_progress * 100, p_article_count, eta_dur, eta_time,
-                    )
+                    progress.set_progress(abs_progress * 100, p_article_count, eta_dur, eta_time)
 
                     batch_queue.put((
                         batch_ids, batch_docs, batch_metadatas,
@@ -302,7 +304,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             break
 
         batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
-        logger.info("Encodage et insertion de %d chunks dans ChromaDB...", len(batch_ids))
+        progress.set_info("Encodage et insertion de %d chunks dans ChromaDB..." % len(batch_ids))
         batch_embeddings = model.encode(batch_docs, batch_size=256).tolist()
         collection.add(
             ids=batch_ids,
@@ -318,6 +320,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
 
+    progress.stop()
     _set_indexing_eta(None)
 
     elapsed = time.monotonic() - start_time
