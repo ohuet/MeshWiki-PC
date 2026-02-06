@@ -1,0 +1,177 @@
+"""MeshWiki entry point — orchestrates all components."""
+
+import json
+import logging
+import signal
+import sys
+import threading
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import requests
+import yaml
+
+from meshwiki.meshtastic_bridge import MeshtasticBridge
+from meshwiki.rate_limiter import RateLimiter
+from meshwiki.wikipedia_updater import WikipediaUpdater, LAST_UPDATE_FILE
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def _load_config() -> dict:
+    with open("config.yaml") as f:
+        return yaml.safe_load(f)
+
+
+def _check_ollama(config: dict) -> bool:
+    """Verify that Ollama is reachable."""
+    url = config["ollama"]["base_url"]
+    try:
+        response = requests.get(url, timeout=5)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _index_exists(config: dict) -> bool:
+    """Check if a ChromaDB index exists."""
+    db_path = Path(config["vectordb"]["path"])
+    if not db_path.exists():
+        return False
+
+    import chromadb
+    try:
+        client = chromadb.PersistentClient(path=str(db_path))
+        collection = client.get_collection("wikipedia")
+        return collection.count() > 0
+    except Exception:
+        return False
+
+
+def _is_update_due(config: dict) -> bool:
+    """Check if a scheduled update is due based on last_update.json."""
+    if not LAST_UPDATE_FILE.exists():
+        return True
+
+    try:
+        with open(LAST_UPDATE_FILE) as f:
+            data = json.load(f)
+        last_update = datetime.fromisoformat(data["last_update"])
+        interval = timedelta(days=config["updater"]["interval_days"])
+        return datetime.now() - last_update > interval
+    except (KeyError, ValueError):
+        return True
+
+
+def _run_background_update(config: dict) -> None:
+    """Run Wikipedia update in a background thread with lowered priority."""
+    def _update():
+        try:
+            import os
+            # Lower thread priority on Unix
+            if hasattr(os, "nice"):
+                os.nice(10)
+        except OSError:
+            pass
+
+        updater = WikipediaUpdater()
+        updater.run_update()
+
+    thread = threading.Thread(target=_update, name="wikipedia-updater", daemon=True)
+    thread.start()
+
+
+def _start_update_scheduler(config: dict) -> threading.Event:
+    """Start a periodic update scheduler in a background thread.
+
+    Returns a stop event to cancel the scheduler.
+    """
+    stop_event = threading.Event()
+    interval_days = config["updater"]["interval_days"]
+    allowed_hours = config["updater"]["allowed_hours"]
+
+    def _scheduler():
+        while not stop_event.is_set():
+            now = datetime.now()
+            start_hour, end_hour = allowed_hours
+
+            if start_hour <= now.hour < end_hour and _is_update_due(config):
+                logger.info("Scheduled update check starting...")
+                updater = WikipediaUpdater()
+                updater.run_update()
+
+            # Check every hour
+            stop_event.wait(3600)
+
+    thread = threading.Thread(target=_scheduler, name="update-scheduler", daemon=True)
+    thread.start()
+    return stop_event
+
+
+def main() -> None:
+    """Main entry point for MeshWiki."""
+    logger.info("Démarrage de MeshWiki...")
+
+    # Load configuration
+    try:
+        config = _load_config()
+    except FileNotFoundError:
+        logger.error("config.yaml introuvable")
+        sys.exit(1)
+
+    # Check Ollama
+    if not _check_ollama(config):
+        logger.warning("Ollama n'est pas accessible à %s", config["ollama"]["base_url"])
+        logger.warning("Le service démarrera mais les réponses LLM ne fonctionneront pas.")
+
+    # Check/create index
+    if not _index_exists(config):
+        logger.info("Aucune base Wikipedia trouvée. Téléchargement initial en cours...")
+        updater = WikipediaUpdater()
+        updater.run_update()
+
+        if not _index_exists(config):
+            logger.error("Impossible de créer l'index Wikipedia. Vérifiez votre connexion internet.")
+            sys.exit(1)
+    else:
+        # Check for background update
+        if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
+            if _is_update_due(config):
+                logger.info("Mise à jour planifiée, lancement en arrière-plan...")
+                _run_background_update(config)
+
+    # Initialize rate limiter
+    rl_config = config["rate_limiting"]
+    rate_limiter = RateLimiter(
+        max_requests=rl_config["max_requests"],
+        window_seconds=rl_config["window_seconds"],
+    )
+
+    # Connect to Meshtastic
+    bridge = MeshtasticBridge(rate_limiter)
+
+    # Graceful shutdown
+    stop_event = None
+
+    def _signal_handler(sig, frame):
+        logger.info("Arrêt de MeshWiki...")
+        bridge.close()
+        if stop_event:
+            stop_event.set()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    # Start update scheduler
+    if config["updater"]["enabled"]:
+        stop_event = _start_update_scheduler(config)
+
+    # Connect and run
+    logger.info("MeshWiki opérationnel. En attente de messages...")
+    bridge.reconnect_loop()

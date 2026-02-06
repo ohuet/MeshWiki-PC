@@ -1,0 +1,216 @@
+"""Automatic Wikipedia dump download and safe re-indexation."""
+
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+
+import chromadb
+import requests
+import yaml
+from bs4 import BeautifulSoup
+
+from meshwiki.wikipedia_indexer import index_zim
+
+logger = logging.getLogger(__name__)
+
+LAST_UPDATE_FILE = Path("data/last_update.json")
+ACTIVE_COLLECTION = "wikipedia"
+TEMP_COLLECTION = "wikipedia_new"
+BACKUP_COLLECTION = "wikipedia_old"
+
+
+def _load_config() -> dict:
+    with open("config.yaml") as f:
+        return yaml.safe_load(f)
+
+
+def _delete_collection_safe(client, name: str) -> None:
+    """Delete a ChromaDB collection, ignoring errors if it doesn't exist."""
+    try:
+        client.delete_collection(name)
+    except (ValueError, chromadb.errors.NotFoundError):
+        pass
+
+
+class WikipediaUpdater:
+    """Handles Wikipedia dump download, indexation, and safe collection swap."""
+
+    def __init__(self):
+        self.config = _load_config()
+        self.updater_config = self.config["updater"]
+
+    def get_latest_dump_url(self) -> tuple[str, str] | None:
+        """Scrape Kiwix download page to find the latest matching ZIM file.
+
+        Returns (full_url, filename) or None if not found.
+        """
+        kiwix_url = self.updater_config["kiwix_url"]
+        pattern = self.updater_config["dump_pattern"]
+
+        try:
+            response = requests.get(kiwix_url, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            logger.error("Failed to fetch Kiwix page: %s", e)
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            filename = href.split("/")[-1]
+            if filename.startswith(pattern) and filename.endswith(".zim"):
+                base_url = kiwix_url.rsplit("/", 1)[0] + "/"
+                full_url = href if href.startswith("http") else base_url + href
+                return (full_url, filename)
+
+        logger.warning("No matching ZIM file found with pattern '%s'", pattern)
+        return None
+
+    def download_dump(self) -> Path | None:
+        """Download the latest ZIM dump if a newer version is available.
+
+        Returns the path to the downloaded file, or None.
+        """
+        result = self.get_latest_dump_url()
+        if result is None:
+            return None
+
+        url, filename = result
+
+        # Check if we already have this version
+        if LAST_UPDATE_FILE.exists():
+            with open(LAST_UPDATE_FILE) as f:
+                last_update = json.load(f)
+            if last_update.get("last_filename") == filename:
+                logger.info("Already up to date: %s", filename)
+                return None
+
+        temp_dir = Path(self.updater_config["temp_dir"])
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        dest = temp_dir / filename
+
+        logger.info("Downloading %s ...", filename)
+
+        try:
+            headers = {}
+            existing_size = 0
+            if dest.exists():
+                existing_size = dest.stat().st_size
+                headers["Range"] = f"bytes={existing_size}-"
+                logger.info("Resuming download from byte %d", existing_size)
+
+            response = requests.get(url, headers=headers, stream=True, timeout=30)
+
+            if response.status_code == 416:
+                logger.info("File already fully downloaded")
+                return dest
+
+            response.raise_for_status()
+
+            mode = "ab" if existing_size > 0 and response.status_code == 206 else "wb"
+            total = int(response.headers.get("content-length", 0)) + existing_size
+            downloaded = existing_size
+
+            with open(dest, mode) as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0 and downloaded % (10 * 1024 * 1024) < 8192:
+                        progress = (downloaded / total) * 100
+                        logger.info("Download progress: %.1f%%", progress)
+
+            logger.info("Download complete: %s", dest)
+            return dest
+
+        except requests.RequestException as e:
+            logger.error("Download failed: %s", e)
+            return None
+
+    def reindex(self, zim_path: Path) -> bool:
+        """Build a new index and safely swap it with the active one.
+
+        Strategy:
+        1. Index into TEMP_COLLECTION ("wikipedia_new")
+        2. On success: delete ACTIVE_COLLECTION, re-index into ACTIVE_COLLECTION
+           (The old collection serves as implicit backup until deleted)
+        3. On failure: delete TEMP_COLLECTION, old index stays intact
+
+        Returns True on success, False on failure.
+        """
+        config = _load_config()
+        vectordb_path = config["vectordb"]["path"]
+        client = chromadb.PersistentClient(path=vectordb_path)
+
+        try:
+            # Step 1: Index into temp collection to verify the ZIM is valid
+            logger.info("Indexing into temporary collection '%s'...", TEMP_COLLECTION)
+            stats = index_zim(zim_path, collection_name=TEMP_COLLECTION)
+
+            if stats["article_count"] == 0:
+                logger.error("Indexation produced 0 articles, aborting")
+                _delete_collection_safe(client, TEMP_COLLECTION)
+                return False
+
+            # Step 2: Temp succeeded — now replace the active collection
+            logger.info("Temp index OK (%d articles). Replacing active index...", stats["article_count"])
+            _delete_collection_safe(client, ACTIVE_COLLECTION)
+            _delete_collection_safe(client, TEMP_COLLECTION)
+
+            # Re-index directly into the active collection
+            stats = index_zim(zim_path, collection_name=ACTIVE_COLLECTION)
+
+            # Update tracking file
+            LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(LAST_UPDATE_FILE, "w") as f:
+                json.dump({
+                    "last_filename": zim_path.name,
+                    "last_update": datetime.now().isoformat(),
+                    "index_article_count": stats["article_count"],
+                    "index_chunk_count": stats["chunk_count"],
+                }, f, indent=2)
+
+            logger.info("Index swap complete")
+            return True
+
+        except Exception as e:
+            logger.error("Reindexation failed: %s", e)
+            _delete_collection_safe(client, TEMP_COLLECTION)
+            return False
+
+    def cleanup(self, zim_path: Path) -> None:
+        """Remove downloaded ZIM and temp files."""
+        try:
+            if zim_path.exists():
+                size_mb = zim_path.stat().st_size / (1024 * 1024)
+                zim_path.unlink()
+                logger.info("Deleted %s (%.1f MB freed)", zim_path.name, size_mb)
+        except OSError as e:
+            logger.error("Failed to delete %s: %s", zim_path, e)
+
+        temp_dir = Path(self.updater_config["temp_dir"])
+        if temp_dir.exists():
+            for f in temp_dir.iterdir():
+                try:
+                    f.unlink()
+                    logger.info("Cleaned up temp file: %s", f.name)
+                except OSError:
+                    pass
+
+    def run_update(self) -> None:
+        """Full update cycle: check, download, reindex, cleanup."""
+        logger.info("Vérification des mises à jour Wikipedia...")
+
+        zim_path = self.download_dump()
+        if zim_path is None:
+            return
+
+        logger.info("Nouveau dump disponible, ré-indexation en cours...")
+        success = self.reindex(zim_path)
+        self.cleanup(zim_path)
+
+        if success:
+            logger.info("Base Wikipedia mise à jour avec succès")
+        else:
+            logger.info("Échec de la mise à jour, ancien index conservé")
