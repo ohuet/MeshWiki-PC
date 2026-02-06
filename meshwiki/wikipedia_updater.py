@@ -208,9 +208,9 @@ class WikipediaUpdater:
 
         logger.info("Nouveau dump disponible, ré-indexation en cours...")
         success = self.reindex(zim_path)
-        self.cleanup(zim_path)
 
         if success:
+            self.cleanup(zim_path)
             logger.info("Base Wikipedia mise à jour avec succès")
         else:
             logger.info("Échec de la mise à jour, ancien index conservé")

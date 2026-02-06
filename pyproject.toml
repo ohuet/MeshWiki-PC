@@ -16,6 +16,7 @@ dependencies = [
     "pyyaml",
     "apscheduler",
     "beautifulsoup4",
+    "lxml",
 ]
 
 [project.optional-dependencies]
