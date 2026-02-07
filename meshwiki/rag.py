@@ -103,7 +103,7 @@ def query(question: str) -> str:
 
 Question : {question}
 
-Réponds de façon concise."""
+Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
 
     return llm.generate(SYSTEM_PROMPT, user_prompt)
 
