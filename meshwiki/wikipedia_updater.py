@@ -33,7 +33,7 @@ def _delete_collection_safe(client, name: str) -> None:
         pass
 
 
-def _copy_collection(client, source_name: str, dest_name: str, batch_size: int = 10000) -> None:
+def _copy_collection(client, source_name: str, dest_name: str, batch_size: int = 5000) -> None:
     """Copy all data from one ChromaDB collection to another.
 
     Creates the destination collection and copies embeddings, documents,
@@ -186,11 +186,11 @@ class WikipediaUpdater:
                 _delete_collection_safe(client, TEMP_COLLECTION)
                 return False
 
-            # Step 2: Replace active collection by copying from temp
+            # Step 2: Replace active collection by renaming temp
             logger.info("Temp index OK (%d articles). Replacing active index...", stats["article_count"])
             _delete_collection_safe(client, ACTIVE_COLLECTION)
-            _copy_collection(client, TEMP_COLLECTION, ACTIVE_COLLECTION)
-            _delete_collection_safe(client, TEMP_COLLECTION)
+            temp_col = client.get_collection(TEMP_COLLECTION)
+            temp_col.modify(name=ACTIVE_COLLECTION)
 
             # Update tracking file
             LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)

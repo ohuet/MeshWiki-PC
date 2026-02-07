@@ -99,11 +99,12 @@ def test_download_dump_returns_none_when_no_url(mock_config):
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.index_zim")
-@patch("meshwiki.wikipedia_updater._copy_collection")
 @patch("meshwiki.wikipedia_updater.chromadb")
-def test_reindex_success(mock_chromadb, mock_copy, mock_index_zim, mock_config):
+def test_reindex_success(mock_chromadb, mock_index_zim, mock_config):
     mock_index_zim.return_value = {"article_count": 100, "chunk_count": 500}
     mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
     mock_chromadb.PersistentClient.return_value = mock_client
 
     updater = WikipediaUpdater()
@@ -114,10 +115,10 @@ def test_reindex_success(mock_chromadb, mock_copy, mock_index_zim, mock_config):
         result = updater.reindex(zim_path)
 
     assert result is True
-    # index_zim should be called once (temp only), then data is copied
-    assert mock_index_zim.call_count == 1
     mock_index_zim.assert_called_once_with(zim_path, collection_name="wikipedia_new")
-    mock_copy.assert_called_once_with(mock_client, "wikipedia_new", "wikipedia")
+    # Temp collection is renamed to active (not copied)
+    mock_client.get_collection.assert_called_with("wikipedia_new")
+    mock_collection.modify.assert_called_once_with(name="wikipedia")
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
