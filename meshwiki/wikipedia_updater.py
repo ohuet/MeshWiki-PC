@@ -11,6 +11,7 @@ import yaml
 from bs4 import BeautifulSoup
 
 from meshwiki.wikipedia_indexer import index_zim
+from meshwiki.rag import reset_collection
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,9 @@ class WikipediaUpdater:
             _delete_collection_safe(client, ACTIVE_COLLECTION)
             temp_col = client.get_collection(TEMP_COLLECTION)
             temp_col.modify(name=ACTIVE_COLLECTION)
+
+            # Invalidate RAG cache so it picks up the renamed collection
+            reset_collection()
 
             # Update tracking file
             LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)

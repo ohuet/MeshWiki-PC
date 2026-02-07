@@ -120,6 +120,16 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
     assert "Antananarivo" in user_prompt
 
 
+def test_reset_collection_clears_cache():
+    """reset_collection() sets _collection to None so next query re-fetches."""
+    rag_module._collection = MagicMock()
+    assert rag_module._collection is not None
+
+    rag_module.reset_collection()
+
+    assert rag_module._collection is None
+
+
 @patch("meshwiki.rag.llm")
 def test_query_without_context_calls_llm(mock_llm):
     """query_without_context() calls LLM with ETA in system prompt and the question."""

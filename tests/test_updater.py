@@ -98,9 +98,10 @@ def test_download_dump_returns_none_when_no_url(mock_config):
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.wikipedia_updater.reset_collection")
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.chromadb")
-def test_reindex_success(mock_chromadb, mock_index_zim, mock_config):
+def test_reindex_success(mock_chromadb, mock_index_zim, mock_reset, mock_config):
     mock_index_zim.return_value = {"article_count": 100, "chunk_count": 500}
     mock_client = MagicMock()
     mock_collection = MagicMock()
@@ -119,6 +120,8 @@ def test_reindex_success(mock_chromadb, mock_index_zim, mock_config):
     # Temp collection is renamed to active (not copied)
     mock_client.get_collection.assert_called_with("wikipedia_new")
     mock_collection.modify.assert_called_once_with(name="wikipedia")
+    # RAG cache is invalidated after swap
+    mock_reset.assert_called_once()
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)

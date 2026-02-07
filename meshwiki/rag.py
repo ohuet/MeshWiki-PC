@@ -16,7 +16,7 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-Si les extraits ne contiennent pas la réponse, dis-le clairement.
+Si les extraits ne contiennent pas la réponse, indique que tu n'as pas trouvé la réponse.
 Ne fabrique JAMAIS d'information."""
 
 SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
@@ -50,6 +50,15 @@ def _get_collection():
         client = chromadb.PersistentClient(path=config["vectordb"]["path"])
         _collection = client.get_collection("wikipedia")
     return _collection
+
+
+def reset_collection() -> None:
+    """Invalidate the cached collection so the next query re-fetches it.
+
+    Must be called after a collection rename/swap in the updater.
+    """
+    global _collection
+    _collection = None
 
 
 def query(question: str) -> str:
