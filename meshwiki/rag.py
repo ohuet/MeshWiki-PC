@@ -79,18 +79,35 @@ def query(question: str) -> str:
     # Semantic search
     results = collection.query(
         query_embeddings=[question_embedding],
-        n_results=5,
+        n_results=10,
+        include=["documents", "metadatas", "distances"],
     )
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
 
-    if not documents:
+    # Log all retrieved chunks for debugging
+    for doc, meta, dist in zip(documents, metadatas, distances):
+        logger.debug("  [%.3f] %s: %.80s...", dist, meta.get("title", "?"), doc)
+
+    # Filter out low-relevance results (cosine distance > threshold)
+    max_distance = 0.45
+    filtered = [
+        (doc, meta, dist)
+        for doc, meta, dist in zip(documents, metadatas, distances)
+        if dist <= max_distance
+    ]
+
+    if not filtered:
+        logger.info("No relevant chunks found (best distance: %.3f)", distances[0] if distances else -1)
         return "Aucun article pertinent trouvé pour cette question."
+
+    logger.info("Search: %d/%d chunks kept (distance <= %.2f)", len(filtered), len(documents), max_distance)
 
     # Build context from retrieved chunks
     context_parts = []
-    for doc, meta in zip(documents, metadatas):
+    for doc, meta, dist in filtered:
         title = meta.get("title", "")
         context_parts.append(f"[{title}] {doc}")
 

@@ -32,6 +32,11 @@ def test_clean_html_collapses_whitespace():
     assert _clean_html(html) == "Un texte avec des espaces"
 
 
+def test_clean_html_strips_wikipedia_footer():
+    html = "<p>Contenu utile.</p><p>Cet article est issu de Wikipédia. Sauf mention contraire, le texte est disponible sous Creative Commons Attribution-Share Alike 4.0. Des conditions supplémentaires peuvent s'appliquer aux fichiers multimédias.</p>"
+    assert _clean_html(html) == "Contenu utile."
+
+
 def test_chunk_text_basic():
     words = " ".join(f"mot{i}" for i in range(100))
     chunks = _chunk_text(words, chunk_size=30, overlap=5)

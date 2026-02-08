@@ -101,7 +101,10 @@ def _clean_html(html: str) -> str:
     for el in doc.iter("script", "style"):
         el.drop_tree()
     text = doc.text_content()
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    # Strip the Kiwix/Wikipedia license footer
+    text = re.sub(r"\s*Cet article est issu de Wikipédia\..*$", "", text)
+    return text
 
 
 def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -317,7 +320,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                 for j, chunk in enumerate(chunks):
                     doc_id = f"{collection_name}_{p_article_count}_{j}"
                     batch_ids.append(doc_id)
-                    batch_docs.append(chunk)
+                    batch_docs.append(f"{title} — {chunk}")
                     batch_metadatas.append({
                         "title": title,
                         "chunk_index": j,

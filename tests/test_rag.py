@@ -27,6 +27,7 @@ def test_query_success(mock_config, mock_chromadb, mock_st, mock_llm):
     mock_collection.query.return_value = {
         "documents": [["Paris est la capitale de la France.", "La France est en Europe."]],
         "metadatas": [[{"title": "Paris"}, {"title": "France"}]],
+        "distances": [[0.15, 0.25]],
     }
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
@@ -65,7 +66,7 @@ def test_query_no_results(mock_config, mock_chromadb, mock_st):
     mock_st.return_value = mock_model
 
     mock_collection = MagicMock()
-    mock_collection.query.return_value = {"documents": [[]], "metadatas": [[]]}
+    mock_collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
     mock_chromadb.PersistentClient.return_value = mock_client
@@ -106,6 +107,7 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
     mock_collection.query.return_value = {
         "documents": [["Antananarivo est la capitale de Madagascar."]],
         "metadatas": [[{"title": "Madagascar"}]],
+        "distances": [[0.12]],
     }
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
@@ -118,6 +120,37 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
     user_prompt = mock_llm.generate.call_args[0][1]
     assert "[Madagascar]" in user_prompt
     assert "Antananarivo" in user_prompt
+
+
+@patch.object(rag_module, "_collection", None)
+@patch.object(rag_module, "_model", None)
+@patch("meshwiki.rag.SentenceTransformer")
+@patch("meshwiki.rag.chromadb")
+@patch("meshwiki.rag._load_config")
+def test_query_filters_distant_results(mock_config, mock_chromadb, mock_st):
+    """Results with cosine distance > threshold are filtered out."""
+    mock_config.return_value = {
+        "embeddings": {"model": "test-model"},
+        "vectordb": {"path": "./test_db"},
+    }
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_st.return_value = mock_model
+
+    mock_collection = MagicMock()
+    mock_collection.query.return_value = {
+        "documents": [["Requin cuivre info", "Requin marteau info"]],
+        "metadatas": [[{"title": "Requin cuivre"}, {"title": "Requin marteau"}]],
+        "distances": [[0.55, 0.70]],
+    }
+    mock_client = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    result = rag_module.query("Requin tigre ?")
+
+    assert "Aucun article pertinent" in result
 
 
 def test_reset_collection_clears_cache():
