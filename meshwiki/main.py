@@ -1,8 +1,11 @@
 """MeshWiki entry point — orchestrates all components."""
 
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import json
 import logging
-import os
 import signal
 import sys
 import threading

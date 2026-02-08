@@ -234,14 +234,17 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     logger.info("Loading embedding model: %s", embeddings_config["model"])
     model_name = embeddings_config["model"]
     truncate_dim = embeddings_config.get("truncate_dim")
+    model_kwargs = {"torch_dtype": "float16"}
     try:
         model = SentenceTransformer(
             model_name, truncate_dim=truncate_dim, local_files_only=True,
+            model_kwargs=model_kwargs,
         )
     except OSError:
         logger.info("Downloading embedding model: %s (first time)", model_name)
         model = SentenceTransformer(
             model_name, truncate_dim=truncate_dim,
+            model_kwargs=model_kwargs,
         )
 
     logger.info("Opening ZIM file: %s", zim_path)
@@ -381,7 +384,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
         progress.set_info("Encodage et insertion de %d chunks dans ChromaDB..." % len(batch_ids))
-        batch_embeddings = model.encode(batch_docs, batch_size=256).tolist()
+        batch_embeddings = model.encode(batch_docs, batch_size=64).tolist()
         collection.add(
             ids=batch_ids,
             documents=batch_docs,

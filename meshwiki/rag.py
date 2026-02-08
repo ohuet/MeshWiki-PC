@@ -42,14 +42,17 @@ def _get_model():
         embeddings_config = config["embeddings"]
         model_name = embeddings_config["model"]
         truncate_dim = embeddings_config.get("truncate_dim")
+        model_kwargs = {"torch_dtype": "float16"}
         try:
             _model = SentenceTransformer(
                 model_name, truncate_dim=truncate_dim, local_files_only=True,
+                model_kwargs=model_kwargs,
             )
         except OSError:
             logger.info("Downloading embedding model: %s (first time)", model_name)
             _model = SentenceTransformer(
                 model_name, truncate_dim=truncate_dim,
+                model_kwargs=model_kwargs,
             )
     return _model
 
