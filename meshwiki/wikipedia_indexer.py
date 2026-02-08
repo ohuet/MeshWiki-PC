@@ -232,7 +232,17 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     vectordb_path = config["vectordb"]["path"]
 
     logger.info("Loading embedding model: %s", embeddings_config["model"])
-    model = SentenceTransformer(embeddings_config["model"])
+    model_name = embeddings_config["model"]
+    truncate_dim = embeddings_config.get("truncate_dim")
+    try:
+        model = SentenceTransformer(
+            model_name, truncate_dim=truncate_dim, local_files_only=True,
+        )
+    except OSError:
+        logger.info("Downloading embedding model: %s (first time)", model_name)
+        model = SentenceTransformer(
+            model_name, truncate_dim=truncate_dim,
+        )
 
     logger.info("Opening ZIM file: %s", zim_path)
     archive = Archive(str(zim_path))

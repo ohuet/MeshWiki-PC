@@ -19,7 +19,7 @@ def test_query_success(mock_config, mock_chromadb, mock_st, mock_llm):
 
     # Mock embedding model
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
     mock_st.return_value = mock_model
 
     # Mock ChromaDB collection
@@ -62,7 +62,7 @@ def test_query_no_results(mock_config, mock_chromadb, mock_st):
     }
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
     mock_st.return_value = mock_model
 
     mock_collection = MagicMock()
@@ -100,7 +100,7 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
     }
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
     mock_st.return_value = mock_model
 
     mock_collection = MagicMock()
@@ -135,7 +135,7 @@ def test_query_filters_distant_results(mock_config, mock_chromadb, mock_st):
     }
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
     mock_st.return_value = mock_model
 
     mock_collection = MagicMock()

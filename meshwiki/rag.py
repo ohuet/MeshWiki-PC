@@ -39,7 +39,18 @@ def _get_model():
     global _model
     if _model is None:
         config = _load_config()
-        _model = SentenceTransformer(config["embeddings"]["model"])
+        embeddings_config = config["embeddings"]
+        model_name = embeddings_config["model"]
+        truncate_dim = embeddings_config.get("truncate_dim")
+        try:
+            _model = SentenceTransformer(
+                model_name, truncate_dim=truncate_dim, local_files_only=True,
+            )
+        except OSError:
+            logger.info("Downloading embedding model: %s (first time)", model_name)
+            _model = SentenceTransformer(
+                model_name, truncate_dim=truncate_dim,
+            )
     return _model
 
 

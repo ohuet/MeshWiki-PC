@@ -45,7 +45,7 @@ pytest tests/test_chunker.py::test_function_name -v
 - **llm.py** — HTTP POST to Ollama's `/api/generate` endpoint. Stream disabled, low temperature (0.1) for factual answers.
 - **chunker.py** — Splits responses into ≤220-byte UTF-8 chunks. Numbered `[1/N]` format. Max 5 chunks, truncates with `... [tronqué]` if exceeded. Never splits mid-word.
 - **rate_limiter.py** — Thread-safe sliding window rate limiter per Meshtastic node ID. Returns a French denial message with wait time when limit exceeded.
-- **wikipedia_indexer.py** — Reads `.zim` files (Kiwix format via `libzim`), extracts/cleans articles, chunks at ~500 tokens with 50-token overlap, generates embeddings (`paraphrase-multilingual-MiniLM-L12-v2`), stores in ChromaDB.
+- **wikipedia_indexer.py** — Reads `.zim` files (Kiwix format via `libzim`), extracts/cleans articles, chunks at ~500 tokens with 50-token overlap, generates embeddings (`BAAI/bge-m3`), stores in ChromaDB.
 - **wikipedia_updater.py** — Scrapes Kiwix download page for latest `wikipedia_fr_all_mini_*.zim`, downloads with resume support, performs safe collection swap (new → active, old as backup) so the app never has downtime.
 
 ### Key Design Constraints
@@ -66,7 +66,7 @@ The plan specifies a phased build order, each phase with corresponding tests:
 
 ## Language & Locale
 
-All user-facing messages (responses, errors, rate limit denials) are in **French**. Code, comments, and variable names are in English. The embedding model is multilingual (`paraphrase-multilingual-MiniLM-L12-v2`).
+All user-facing messages (responses, errors, rate limit denials) are in **French**. Code, comments, and variable names are in English. The embedding model is multilingual (`BAAI/bge-m3`, 8192-token context, 1024-dim embeddings).
 
 ## Commit Message Format
 

@@ -15,7 +15,7 @@ wikipedia:
   source_format: "zim"
 
 embeddings:
-  model: "paraphrase-multilingual-MiniLM-L12-v2"
+  model: "BAAI/bge-m3"
   chunk_size: 500             # tokens par chunk d'article
   chunk_overlap: 50           # chevauchement entre chunks
 

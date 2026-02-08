@@ -111,7 +111,7 @@ def test_index_zim_processes_articles(mock_chromadb, mock_config):
 
     # Mock SentenceTransformer
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 384])
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
 
     # Mock Archive
     mock_entry = MagicMock()
@@ -192,7 +192,7 @@ def test_index_zim_resumes_from_checkpoint(
     mock_client.get_or_create_collection.return_value = mock_collection
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 384])
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
 
     # Checkpoint says we already processed entries 0-4 (5 entries, 2 articles, 6 chunks)
     mock_load_cp.return_value = (4, 2, 6)
@@ -247,7 +247,7 @@ def test_index_zim_deletes_checkpoint_on_completion(
     mock_client.get_or_create_collection.return_value = mock_collection
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 384])
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
 
     # No checkpoint — fresh indexation
     mock_load_cp.return_value = None
@@ -368,7 +368,7 @@ def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config):
     mock_client.get_or_create_collection.return_value = mock_collection
 
     mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 384])
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
 
     mock_archive = MagicMock()
     mock_archive.entry_count = 0  # No entries — just check the initial ETA
