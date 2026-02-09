@@ -72,3 +72,21 @@ def test_wants_indexation_without_flag():
     """_wants_indexation returns False when no index flag is in sys.argv."""
     with patch.object(sys, "argv", ["meshwiki"]):
         assert main_module._wants_indexation() is False
+
+
+def test_wants_update_with_flag():
+    """_wants_update returns True when --update is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "--update"]):
+        assert main_module._wants_update() is True
+
+
+def test_wants_update_with_slash_flag():
+    """_wants_update returns True when /update is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "/update"]):
+        assert main_module._wants_update() is True
+
+
+def test_wants_update_without_flag():
+    """_wants_update returns False when no update flag is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki"]):
+        assert main_module._wants_update() is False

@@ -98,6 +98,11 @@ def _wants_indexation() -> bool:
     return any(arg in ("/index", "-index", "--index") for arg in sys.argv[1:])
 
 
+def _wants_update() -> bool:
+    """Check if the user requested an update check via command-line argument."""
+    return any(arg in ("/update", "-update", "--update") for arg in sys.argv[1:])
+
+
 def _find_existing_zim(config: dict) -> Path | None:
     """Find an existing .zim file in the temp directory."""
     temp_dir = Path(config["updater"]["temp_dir"])
@@ -211,29 +216,28 @@ def main() -> None:
     # Check/create index
     if _index_exists(config):
         logger.info("Index ChromaDB disponible")
-        # Index ready — check for scheduled update (download only, never auto-reindex)
-        if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
-            if _is_update_due(config):
-                if _wants_indexation():
-                    logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
-                    _run_background_update(config)
-                else:
-                    logger.info("Nouveau ZIM disponible, téléchargement en arrière-plan... Lancez avec --index pour réindexer.")
-                    _run_background_download(config)
+        # Update check only if --update is passed
+        if _wants_update() or _wants_indexation():
+            if _wants_indexation():
+                logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
+                _run_background_update(config)
+            else:
+                logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
+                _run_background_download(config)
     else:
         zim_path = _find_existing_zim(config)
         if zim_path:
             kiwix_search.set_zim_path(zim_path)
-            logger.info("Pas d'index — recherche Kiwix activée (%s)", zim_path.name)
+            logger.info("Pas d'index ChromaDB — recherche Kiwix activée comme fallback (%s)", zim_path.name)
         else:
-            logger.info("Aucun ZIM trouvé, téléchargement en arrière-plan...")
+            logger.info("Aucun index ni ZIM trouvé — téléchargement en arrière-plan...")
             _run_background_download(config)
 
         if _wants_indexation():
             logger.info("Indexation demandée, lancement en arrière-plan...")
             _run_background_update(config)
         else:
-            logger.info("Lancez avec --index pour démarrer l'indexation ChromaDB")
+            logger.info("Lancez avec --index pour créer l'index ChromaDB")
 
     # Graceful shutdown
     stop_event = None
