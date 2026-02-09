@@ -121,6 +121,11 @@ def _wants_update() -> bool:
     return any(arg in ("/update", "-update", "--update") for arg in sys.argv[1:])
 
 
+def _wants_offline() -> bool:
+    """Check if the user requested offline mode (no downloads)."""
+    return any(arg in ("/offline", "-offline", "--offline") for arg in sys.argv[1:])
+
+
 def _find_existing_zim(config: dict) -> Path | None:
     """Find an existing .zim file in the temp directory."""
     temp_dir = Path(config["updater"]["temp_dir"])
@@ -248,8 +253,11 @@ def main() -> None:
             kiwix_search.set_zim_path(zim_path)
             logger.info("Pas d'index ChromaDB — recherche Kiwix activée comme fallback (%s)", zim_path.name)
         else:
-            logger.info("Aucun index ni ZIM trouvé — téléchargement en arrière-plan...")
-            _run_background_download(config)
+            if _wants_offline():
+                logger.info("Aucun index ni ZIM trouvé — mode offline, pas de téléchargement. Le LLM répondra seul.")
+            else:
+                logger.info("Aucun index ni ZIM trouvé — téléchargement en arrière-plan...")
+                _run_background_download(config)
 
         if _wants_indexation():
             logger.info("Indexation demandée, lancement en arrière-plan...")
@@ -270,8 +278,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    # Start update scheduler
-    if config["updater"]["enabled"]:
+    # Start update scheduler (disabled in offline mode)
+    if config["updater"]["enabled"] and not _wants_offline():
         stop_event = _start_update_scheduler(config)
 
     # Connect and run

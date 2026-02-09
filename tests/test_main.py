@@ -90,3 +90,21 @@ def test_wants_update_without_flag():
     """_wants_update returns False when no update flag is in sys.argv."""
     with patch.object(sys, "argv", ["meshwiki"]):
         assert main_module._wants_update() is False
+
+
+def test_wants_offline_with_flag():
+    """_wants_offline returns True when --offline is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "--offline"]):
+        assert main_module._wants_offline() is True
+
+
+def test_wants_offline_with_slash_flag():
+    """_wants_offline returns True when /offline is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "/offline"]):
+        assert main_module._wants_offline() is True
+
+
+def test_wants_offline_without_flag():
+    """_wants_offline returns False when no offline flag is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki"]):
+        assert main_module._wants_offline() is False
