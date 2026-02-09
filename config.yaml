@@ -19,6 +19,15 @@ embeddings:
   embedding_dim: 1024         # dimension des embeddings du modèle
   chunk_size: 500             # tokens par chunk d'article
   chunk_overlap: 50           # chevauchement entre chunks
+  # Encodage distant via API OpenAI-compatible (pour accélérer l'indexation sur GPU)
+  # Utilisé UNIQUEMENT pour l'indexation, pas pour les requêtes RAG.
+  remote:
+    base_url: "http://gpu-server:11434"  # URL du serveur Ollama distant
+    api_type: "ollama"                   # "openai" ou "ollama"
+    model: "bge-m3"                      # Nom du modèle sur le serveur distant
+    #api_key: "sk-..."                   # Clé API (Bearer token), optionnelle
+    batch_size: 256                     # Taille des sous-lots envoyés à l'API
+    timeout: 300                        # Timeout par requête en secondes
 
 vectordb:
   path: "./data/chroma_db"
