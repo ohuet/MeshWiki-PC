@@ -121,11 +121,7 @@ class MeshtasticBridge:
             if kiwix_search.get_zim_path() is not None:
                 answer = rag.query_with_kiwix_context_permanent(question)
             else:
-                answer = (
-                    "Base Wikipedia en cours de téléchargement. "
-                    "Copiez un fichier .zim dans data/tmp/ "
-                    "ou lancez avec --index pour indexer."
-                )
+                answer = rag.query_without_data(question)
             logger.info("Answer to %s (no index): %s", sender, answer)
             self.send_response(sender, answer)
             return

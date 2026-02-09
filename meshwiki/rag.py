@@ -37,6 +37,12 @@ Si les extraits ne contiennent pas la réponse, indique que tu n'as pas trouvé 
 Ne fabrique JAMAIS d'information.
 Termine ta réponse par : "[Recherche Kiwix — base optimisée dans {eta}]" """
 
+SYSTEM_PROMPT_NO_DATA = """Tu es un assistant encyclopédique sur l'île de La Réunion.
+Tu ne disposes PAS d'extraits Wikipedia pour le moment.
+Réponds du mieux possible avec tes connaissances générales.
+Termine ta réponse par : "[Sans source Wikipedia]"
+Ta réponse doit faire une ou deux phrases, max 400 caractères (transmission radio)."""
+
 SYSTEM_PROMPT_KIWIX_PERMANENT = """Tu es un assistant encyclopédique offline.
 Tu réponds à partir des extraits Wikipedia fournis (recherche textuelle, moins précise que la recherche sémantique habituelle).
 Tes réponses doivent être :
@@ -246,3 +252,12 @@ Question : {question}
 Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
 
     return llm.generate(SYSTEM_PROMPT_KIWIX_PERMANENT, user_prompt)
+
+
+def query_without_data(question: str) -> str:
+    """Answer a question using only the LLM's general knowledge.
+
+    Used when neither the ChromaDB index nor a ZIM file are available.
+    """
+    user_prompt = f"Question : {question}\n\nRéponds de façon concise."
+    return llm.generate(SYSTEM_PROMPT_NO_DATA, user_prompt)

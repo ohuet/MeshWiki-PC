@@ -322,3 +322,21 @@ def test_query_with_kiwix_context_permanent_no_results(mock_kiwix):
     result = rag_module.query_with_kiwix_context_permanent("Question obscure ?")
 
     assert "Aucun résultat" in result
+
+
+@patch("meshwiki.rag.llm")
+def test_query_without_data_calls_llm(mock_llm):
+    """query_without_data() calls LLM with general knowledge prompt."""
+    mock_llm.generate.return_value = "Paris est la capitale. [Sans source Wikipedia]"
+
+    result = rag_module.query_without_data("Capitale de la France ?")
+
+    assert result == "Paris est la capitale. [Sans source Wikipedia]"
+    mock_llm.generate.assert_called_once()
+
+    call_args = mock_llm.generate.call_args
+    system_prompt = call_args[0][0]
+    user_prompt = call_args[0][1]
+    assert "Sans source Wikipedia" in system_prompt
+    assert "connaissances générales" in system_prompt
+    assert "Capitale de la France ?" in user_prompt

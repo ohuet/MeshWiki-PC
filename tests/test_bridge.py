@@ -344,10 +344,11 @@ def test_no_index_with_kiwix_uses_fallback(mock_eta, mock_rag, mock_kiwix, mock_
 @patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
-def test_no_index_no_kiwix_sends_download_message(mock_eta, mock_rag, mock_kiwix, mock_config):
-    """When neither index nor ZIM exists, sends a message about downloading."""
+def test_no_index_no_kiwix_calls_llm_without_data(mock_eta, mock_rag, mock_kiwix, mock_config):
+    """When neither index nor ZIM exists, calls LLM with general knowledge."""
     mock_rag.is_available.return_value = False
     mock_kiwix.get_zim_path.return_value = None
+    mock_rag.query_without_data.return_value = "Paris est la capitale. [Sans source Wikipedia]"
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -357,7 +358,9 @@ def test_no_index_no_kiwix_sends_download_message(mock_eta, mock_rag, mock_kiwix
     packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
     bridge._on_message_received(packet, MagicMock())
 
+    mock_rag.query_without_data.assert_called_once_with("Capitale de la France")
     mock_rag.query.assert_not_called()
-    sent_text = bridge.interface.sendText.call_args[0][0]
-    assert "téléchargement" in sent_text
-    assert "--index" in sent_text
+    bridge.interface.sendText.assert_called_once_with(
+        "Paris est la capitale. [Sans source Wikipedia]",
+        destinationId=f"!{OTHER_NODE_NUM:08x}",
+    )
