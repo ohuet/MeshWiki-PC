@@ -124,7 +124,7 @@ def _run_background_download(config: dict) -> None:
         zim_path = updater.download_dump()
         if zim_path is not None:
             kiwix_search.set_zim_path(zim_path)
-            logger.info("ZIM téléchargé, fallback Kiwix activé : %s", zim_path.name)
+            logger.info("ZIM téléchargé : %s — lancez avec --index pour indexer", zim_path.name)
 
     thread = threading.Thread(target=_download, name="zim-downloader", daemon=True)
     thread.start()
@@ -210,6 +210,7 @@ def main() -> None:
 
     # Check/create index
     if _index_exists(config):
+        logger.info("Index ChromaDB disponible")
         # Index ready — check for scheduled update (download only, never auto-reindex)
         if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
             if _is_update_due(config):
@@ -217,7 +218,7 @@ def main() -> None:
                     logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
                     _run_background_update(config)
                 else:
-                    logger.info("Mise à jour planifiée, téléchargement du ZIM en arrière-plan...")
+                    logger.info("Nouveau ZIM disponible, téléchargement en arrière-plan... Lancez avec --index pour réindexer.")
                     _run_background_download(config)
     else:
         zim_path = _find_existing_zim(config)
