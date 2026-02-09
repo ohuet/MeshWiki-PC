@@ -6,7 +6,7 @@ import chromadb
 import yaml
 from sentence_transformers import SentenceTransformer
 
-from meshwiki import llm
+from meshwiki import kiwix_search, llm
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,16 @@ Tu ne disposes PAS d'extraits Wikipedia pour le moment.
 Réponds du mieux possible avec tes connaissances générales.
 Termine ta réponse par : "[Sans source Wikipedia — base disponible dans {eta}]"
 Ta réponse doit faire une ou deux phrases, max 400 caractères (transmission radio)."""
+
+SYSTEM_PROMPT_KIWIX = """Tu es un assistant encyclopédique offline.
+Tu réponds à partir des extraits Wikipedia fournis (recherche textuelle, moins précise que la recherche sémantique habituelle).
+Tes réponses doivent être :
+- Concises (max 400 caractères si possible, car transmises par radio)
+- Factuelles et précises
+- En français
+Si les extraits ne contiennent pas la réponse, indique que tu n'as pas trouvé la réponse.
+Ne fabrique JAMAIS d'information.
+Termine ta réponse par : "[Recherche Kiwix — base optimisée dans {eta}]" """
 
 _model = None
 _collection = None
@@ -143,4 +153,31 @@ def query_without_context(question: str, eta_str: str) -> str:
     """Answer a question without Wikipedia context (during indexation)."""
     system = SYSTEM_PROMPT_NO_INDEX.format(eta=eta_str)
     user_prompt = f"Question : {question}\n\nRéponds de façon concise."
+    return llm.generate(system, user_prompt)
+
+
+def query_with_kiwix_context(question: str, eta_str: str) -> str:
+    """Answer a question using Kiwix full-text search as context (during indexation).
+
+    Falls back to query_without_context() if Kiwix returns no results.
+    """
+    results = kiwix_search.search(question)
+    if not results:
+        return query_without_context(question, eta_str)
+
+    context_parts = []
+    for r in results:
+        context_parts.append(f"[{r['title']}] {r['content']}")
+    context = "\n\n".join(context_parts)
+
+    system = SYSTEM_PROMPT_KIWIX.format(eta=eta_str)
+    user_prompt = f"""Extraits Wikipedia pertinents :
+---
+{context}
+---
+
+Question : {question}
+
+Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+
     return llm.generate(system, user_prompt)

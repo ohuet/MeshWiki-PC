@@ -179,3 +179,44 @@ def test_query_without_context_calls_llm(mock_llm):
     assert "14:30" in system_prompt
     assert "initialisation" in system_prompt
     assert "Capitale de la France ?" in user_prompt
+
+
+@patch("meshwiki.rag.llm")
+@patch("meshwiki.rag.kiwix_search")
+def test_query_with_kiwix_context_uses_results(mock_kiwix, mock_llm):
+    """query_with_kiwix_context() passes Kiwix results as context to the LLM."""
+    mock_kiwix.search.return_value = [
+        {"title": "Paris", "content": "Paris est la capitale de la France."},
+    ]
+    mock_llm.generate.return_value = "Paris est la capitale."
+
+    result = rag_module.query_with_kiwix_context("Capitale de la France ?", "environ 1h30")
+
+    assert result == "Paris est la capitale."
+    mock_llm.generate.assert_called_once()
+
+    call_args = mock_llm.generate.call_args
+    system_prompt = call_args[0][0]
+    user_prompt = call_args[0][1]
+    assert "Kiwix" in system_prompt
+    assert "environ 1h30" in system_prompt
+    assert "[Paris]" in user_prompt
+    assert "Paris est la capitale de la France" in user_prompt
+
+
+@patch("meshwiki.rag.llm")
+@patch("meshwiki.rag.kiwix_search")
+def test_query_with_kiwix_context_fallback_no_results(mock_kiwix, mock_llm):
+    """When Kiwix returns no results, falls back to query_without_context."""
+    mock_kiwix.search.return_value = []
+    mock_llm.generate.return_value = "Réponse sans contexte"
+
+    result = rag_module.query_with_kiwix_context("Question obscure ?", "environ 2h")
+
+    assert result == "Réponse sans contexte"
+    mock_llm.generate.assert_called_once()
+
+    # Should have used the NO_INDEX prompt (fallback), not the Kiwix one
+    system_prompt = mock_llm.generate.call_args[0][0]
+    assert "initialisation" in system_prompt
+    assert "environ 2h" in system_prompt

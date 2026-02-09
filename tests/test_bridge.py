@@ -234,12 +234,14 @@ def test_auto_detect_no_port_found_raises(mock_config):
 
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta")
-def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_config):
-    """When indexation is running, the bridge calls LLM fallback with duration ETA."""
+def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_kiwix, mock_config):
+    """When indexation is running and no ZIM available, calls query_without_context."""
     eta = datetime.now(timezone.utc) + timedelta(hours=1, minutes=30)
     mock_eta.return_value = eta
+    mock_kiwix.get_zim_path.return_value = None
     mock_rag.query_without_context.return_value = "Réponse sans Wikipedia"
 
     limiter = RateLimiter()
@@ -254,8 +256,39 @@ def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_config
     assert call_args[0][0] == "Capitale de la France"
     assert call_args[0][1].startswith("environ 1h")
     mock_rag.query.assert_not_called()
+    mock_rag.query_with_kiwix_context.assert_not_called()
     bridge.interface.sendText.assert_called_once_with(
         "Réponse sans Wikipedia",
+        destinationId=f"!{OTHER_NODE_NUM:08x}",
+    )
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.kiwix_search")
+@patch("meshwiki.meshtastic_bridge.rag")
+@patch("meshwiki.meshtastic_bridge.get_indexing_eta")
+def test_indexing_with_zim_uses_kiwix_fallback(mock_eta, mock_rag, mock_kiwix, mock_config):
+    """When indexation is running and ZIM is available, calls query_with_kiwix_context."""
+    eta = datetime.now(timezone.utc) + timedelta(hours=1, minutes=30)
+    mock_eta.return_value = eta
+    mock_kiwix.get_zim_path.return_value = "/tmp/wikipedia.zim"
+    mock_rag.query_with_kiwix_context.return_value = "Réponse Kiwix"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    call_args = mock_rag.query_with_kiwix_context.call_args
+    assert call_args[0][0] == "Capitale de la France"
+    assert call_args[0][1].startswith("environ 1h")
+    mock_rag.query.assert_not_called()
+    mock_rag.query_without_context.assert_not_called()
+    bridge.interface.sendText.assert_called_once_with(
+        "Réponse Kiwix",
         destinationId=f"!{OTHER_NODE_NUM:08x}",
     )
 

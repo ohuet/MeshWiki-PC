@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from meshwiki.wikipedia_indexer import index_zim
 from meshwiki.rag import reset_collection
+from meshwiki import kiwix_search
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ class WikipediaUpdater:
         vectordb_path = config["vectordb"]["path"]
         client = chromadb.PersistentClient(path=vectordb_path)
 
+        kiwix_search.set_zim_path(zim_path)
         try:
             # Step 1: Index into temp collection to verify the ZIM is valid
             logger.info("Indexing into temporary collection '%s'...", TEMP_COLLECTION)
@@ -217,6 +219,8 @@ class WikipediaUpdater:
             # The collection and checkpoint stay in sync for safe resume.
             logger.error("Reindexation failed: %s", e)
             return False
+        finally:
+            kiwix_search.set_zim_path(None)
 
     def cleanup(self, zim_path: Path) -> None:
         """Remove downloaded ZIM and temp files."""

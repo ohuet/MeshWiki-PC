@@ -11,7 +11,7 @@ from pubsub import pub
 from meshwiki.chunker import split_message
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_indexer import get_indexing_eta
-from meshwiki import rag
+from meshwiki import kiwix_search, rag
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,10 @@ class MeshtasticBridge:
                 eta_str = f"environ {remaining_min // 60}h{remaining_min % 60:02d}"
             else:
                 eta_str = f"environ {remaining_min}min"
-            answer = rag.query_without_context(question, eta_str)
+            if kiwix_search.get_zim_path() is not None:
+                answer = rag.query_with_kiwix_context(question, eta_str)
+            else:
+                answer = rag.query_without_context(question, eta_str)
             logger.info("Answer to %s (fallback): %s", sender, answer)
             self.send_response(sender, answer)
             return
