@@ -16,6 +16,7 @@ from pathlib import Path
 import requests
 import yaml
 
+from meshwiki import kiwix_search
 from meshwiki.meshtastic_bridge import MeshtasticBridge
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_updater import WikipediaUpdater, LAST_UPDATE_FILE
@@ -92,6 +93,43 @@ def _is_update_due(config: dict) -> bool:
         return True
 
 
+def _wants_indexation() -> bool:
+    """Check if the user requested indexation via command-line argument."""
+    return any(arg in ("/index", "-index", "--index") for arg in sys.argv[1:])
+
+
+def _find_existing_zim(config: dict) -> Path | None:
+    """Find an existing .zim file in the temp directory."""
+    temp_dir = Path(config["updater"]["temp_dir"])
+    if not temp_dir.exists():
+        return None
+    zim_files = sorted(temp_dir.glob("*.zim"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return zim_files[0] if zim_files else None
+
+
+def _run_background_download(config: dict) -> None:
+    """Download a ZIM file in background (without indexation).
+
+    When the download completes, activates the Kiwix fallback.
+    """
+    def _download():
+        try:
+            import os
+            if hasattr(os, "nice"):
+                os.nice(10)
+        except OSError:
+            pass
+
+        updater = WikipediaUpdater()
+        zim_path = updater.download_dump()
+        if zim_path is not None:
+            kiwix_search.set_zim_path(zim_path)
+            logger.info("ZIM téléchargé, fallback Kiwix activé : %s", zim_path.name)
+
+    thread = threading.Thread(target=_download, name="zim-downloader", daemon=True)
+    thread.start()
+
+
 def _run_background_update(config: dict) -> None:
     """Run Wikipedia update in a background thread with lowered priority."""
     def _update():
@@ -111,12 +149,12 @@ def _run_background_update(config: dict) -> None:
 
 
 def _start_update_scheduler(config: dict) -> threading.Event:
-    """Start a periodic update scheduler in a background thread.
+    """Start a periodic download scheduler in a background thread.
 
+    Only downloads new ZIM files — never triggers indexation automatically.
     Returns a stop event to cancel the scheduler.
     """
     stop_event = threading.Event()
-    interval_days = config["updater"]["interval_days"]
     allowed_hours = config["updater"]["allowed_hours"]
 
     def _scheduler():
@@ -125,9 +163,15 @@ def _start_update_scheduler(config: dict) -> threading.Event:
             start_hour, end_hour = allowed_hours
 
             if start_hour <= now.hour < end_hour and _is_update_due(config):
-                logger.info("Scheduled update check starting...")
+                logger.info("Téléchargement planifié en cours...")
                 updater = WikipediaUpdater()
-                updater.run_update()
+                zim_path = updater.download_dump()
+                if zim_path is not None:
+                    kiwix_search.set_zim_path(zim_path)
+                    logger.info(
+                        "Nouveau ZIM téléchargé : %s — lancez avec --index pour réindexer",
+                        zim_path.name,
+                    )
 
             # Check every hour
             stop_event.wait(3600)
@@ -165,15 +209,30 @@ def main() -> None:
     bridge = MeshtasticBridge(rate_limiter)
 
     # Check/create index
-    if not _index_exists(config):
-        logger.info("Aucune base Wikipedia trouvée. Téléchargement initial en arrière-plan...")
-        _run_background_update(config)
-    else:
-        # Check for background update
+    if _index_exists(config):
+        # Index ready — check for scheduled update (download only, never auto-reindex)
         if config["updater"]["enabled"] and config["updater"]["check_on_startup"]:
             if _is_update_due(config):
-                logger.info("Mise à jour planifiée, lancement en arrière-plan...")
-                _run_background_update(config)
+                if _wants_indexation():
+                    logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
+                    _run_background_update(config)
+                else:
+                    logger.info("Mise à jour planifiée, téléchargement du ZIM en arrière-plan...")
+                    _run_background_download(config)
+    else:
+        zim_path = _find_existing_zim(config)
+        if zim_path:
+            kiwix_search.set_zim_path(zim_path)
+            logger.info("Pas d'index — recherche Kiwix activée (%s)", zim_path.name)
+        else:
+            logger.info("Aucun ZIM trouvé, téléchargement en arrière-plan...")
+            _run_background_download(config)
+
+        if _wants_indexation():
+            logger.info("Indexation demandée, lancement en arrière-plan...")
+            _run_background_update(config)
+        else:
+            logger.info("Lancez avec --index pour démarrer l'indexation ChromaDB")
 
     # Graceful shutdown
     stop_event = None

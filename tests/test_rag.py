@@ -220,3 +220,75 @@ def test_query_with_kiwix_context_fallback_no_results(mock_kiwix, mock_llm):
     system_prompt = mock_llm.generate.call_args[0][0]
     assert "initialisation" in system_prompt
     assert "environ 2h" in system_prompt
+
+
+@patch("meshwiki.rag.chromadb")
+@patch("meshwiki.rag._load_config")
+def test_is_available_true(mock_config, mock_chromadb):
+    """is_available() returns True when the Wikipedia collection exists and has documents."""
+    mock_config.return_value = {"vectordb": {"path": "./test_db"}}
+    mock_collection = MagicMock()
+    mock_collection.count.return_value = 100
+    mock_client = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    with patch("meshwiki.rag.Path") as mock_path:
+        mock_path.return_value.exists.return_value = True
+        assert rag_module.is_available() is True
+
+
+@patch("meshwiki.rag.chromadb")
+@patch("meshwiki.rag._load_config")
+def test_is_available_false_no_collection(mock_config, mock_chromadb):
+    """is_available() returns False when the collection doesn't exist."""
+    mock_config.return_value = {"vectordb": {"path": "./test_db"}}
+    mock_client = MagicMock()
+    mock_client.get_collection.side_effect = Exception("Collection not found")
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    with patch("meshwiki.rag.Path") as mock_path:
+        mock_path.return_value.exists.return_value = True
+        assert rag_module.is_available() is False
+
+
+@patch("meshwiki.rag._load_config")
+def test_is_available_false_no_db(mock_config):
+    """is_available() returns False when the database path doesn't exist."""
+    mock_config.return_value = {"vectordb": {"path": "./nonexistent_db"}}
+
+    with patch("meshwiki.rag.Path") as mock_path:
+        mock_path.return_value.exists.return_value = False
+        assert rag_module.is_available() is False
+
+
+@patch("meshwiki.rag.llm")
+@patch("meshwiki.rag.kiwix_search")
+def test_query_with_kiwix_context_permanent(mock_kiwix, mock_llm):
+    """query_with_kiwix_context_permanent() uses Kiwix results without ETA."""
+    mock_kiwix.search.return_value = [
+        {"title": "Paris", "content": "Paris est la capitale de la France."},
+    ]
+    mock_llm.generate.return_value = "Paris est la capitale."
+
+    result = rag_module.query_with_kiwix_context_permanent("Capitale de la France ?")
+
+    assert result == "Paris est la capitale."
+    mock_llm.generate.assert_called_once()
+
+    call_args = mock_llm.generate.call_args
+    system_prompt = call_args[0][0]
+    user_prompt = call_args[0][1]
+    assert "Recherche textuelle Kiwix" in system_prompt
+    assert "eta" not in system_prompt.lower()
+    assert "[Paris]" in user_prompt
+
+
+@patch("meshwiki.rag.kiwix_search")
+def test_query_with_kiwix_context_permanent_no_results(mock_kiwix):
+    """query_with_kiwix_context_permanent() returns a message when no Kiwix results."""
+    mock_kiwix.search.return_value = []
+
+    result = rag_module.query_with_kiwix_context_permanent("Question obscure ?")
+
+    assert "Aucun résultat" in result

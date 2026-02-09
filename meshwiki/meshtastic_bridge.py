@@ -116,6 +116,20 @@ class MeshtasticBridge:
             self.send_response(sender, answer)
             return
 
+        # Check if index is available
+        if not rag.is_available():
+            if kiwix_search.get_zim_path() is not None:
+                answer = rag.query_with_kiwix_context_permanent(question)
+            else:
+                answer = (
+                    "Base Wikipedia en cours de téléchargement. "
+                    "Copiez un fichier .zim dans data/tmp/ "
+                    "ou lancez avec --index pour indexer."
+                )
+            logger.info("Answer to %s (no index): %s", sender, answer)
+            self.send_response(sender, answer)
+            return
+
         # Check rate limit
         allowed, denial_msg = self.rate_limiter.check(str(sender))
         if not allowed:

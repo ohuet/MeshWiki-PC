@@ -132,7 +132,11 @@ def test_direct_message_with_prefix_strips_it(mock_rag, mock_config):
 
 
 @patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
-def test_rate_limiting_sends_denial(mock_config):
+@patch("meshwiki.meshtastic_bridge.rag")
+def test_rate_limiting_sends_denial(mock_rag, mock_config):
+    mock_rag.is_available.return_value = True
+    mock_rag.query.return_value = "OK"
+
     limiter = RateLimiter(max_requests=1, window_seconds=60)
 
     bridge = MeshtasticBridge(limiter)
@@ -140,10 +144,8 @@ def test_rate_limiting_sends_denial(mock_config):
     bridge.interface = MagicMock()
 
     # First request: allowed
-    with patch("meshwiki.meshtastic_bridge.rag") as mock_rag:
-        mock_rag.query.return_value = "OK"
-        packet = _make_packet("Q1", to_node=MY_NODE_NUM)
-        bridge._on_message_received(packet, MagicMock())
+    packet = _make_packet("Q1", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
 
     # Second request: rate limited
     packet = _make_packet("Q2", to_node=MY_NODE_NUM)
@@ -299,6 +301,7 @@ def test_indexing_with_zim_uses_kiwix_fallback(mock_eta, mock_rag, mock_kiwix, m
 def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
     """When no indexation is running, the bridge processes questions normally."""
     mock_rag.query.return_value = "Paris"
+    mock_rag.is_available.return_value = True
 
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -309,3 +312,52 @@ def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
     bridge._on_message_received(packet, MagicMock())
 
     mock_rag.query.assert_called_once_with("Capitale de la France")
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.kiwix_search")
+@patch("meshwiki.meshtastic_bridge.rag")
+@patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
+def test_no_index_with_kiwix_uses_fallback(mock_eta, mock_rag, mock_kiwix, mock_config):
+    """When no index exists but ZIM is available, uses permanent Kiwix fallback."""
+    mock_rag.is_available.return_value = False
+    mock_kiwix.get_zim_path.return_value = "/tmp/wikipedia.zim"
+    mock_rag.query_with_kiwix_context_permanent.return_value = "Réponse Kiwix permanente"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query_with_kiwix_context_permanent.assert_called_once_with("Capitale de la France")
+    mock_rag.query.assert_not_called()
+    bridge.interface.sendText.assert_called_once_with(
+        "Réponse Kiwix permanente",
+        destinationId=f"!{OTHER_NODE_NUM:08x}",
+    )
+
+
+@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.kiwix_search")
+@patch("meshwiki.meshtastic_bridge.rag")
+@patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
+def test_no_index_no_kiwix_sends_download_message(mock_eta, mock_rag, mock_kiwix, mock_config):
+    """When neither index nor ZIM exists, sends a message about downloading."""
+    mock_rag.is_available.return_value = False
+    mock_kiwix.get_zim_path.return_value = None
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("Capitale de la France", to_node=MY_NODE_NUM)
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query.assert_not_called()
+    sent_text = bridge.interface.sendText.call_args[0][0]
+    assert "téléchargement" in sent_text
+    assert "--index" in sent_text

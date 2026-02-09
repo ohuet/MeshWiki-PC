@@ -1,6 +1,7 @@
 """RAG pipeline: semantic search in ChromaDB + LLM answer generation."""
 
 import logging
+from pathlib import Path
 
 import chromadb
 import yaml
@@ -35,6 +36,16 @@ Tes réponses doivent être :
 Si les extraits ne contiennent pas la réponse, indique que tu n'as pas trouvé la réponse.
 Ne fabrique JAMAIS d'information.
 Termine ta réponse par : "[Recherche Kiwix — base optimisée dans {eta}]" """
+
+SYSTEM_PROMPT_KIWIX_PERMANENT = """Tu es un assistant encyclopédique offline.
+Tu réponds à partir des extraits Wikipedia fournis (recherche textuelle, moins précise que la recherche sémantique habituelle).
+Tes réponses doivent être :
+- Concises (max 400 caractères si possible, car transmises par radio)
+- Factuelles et précises
+- En français
+Si les extraits ne contiennent pas la réponse, indique que tu n'as pas trouvé la réponse.
+Ne fabrique JAMAIS d'information.
+Termine ta réponse par : "[Recherche textuelle Kiwix]" """
 
 _model = None
 _collection = None
@@ -181,3 +192,44 @@ Question : {question}
 Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
 
     return llm.generate(system, user_prompt)
+
+
+def is_available() -> bool:
+    """Check if the ChromaDB Wikipedia index is available and contains documents."""
+    try:
+        config = _load_config()
+        db_path = Path(config["vectordb"]["path"])
+        if not db_path.exists():
+            return False
+        client = chromadb.PersistentClient(path=str(db_path))
+        collection = client.get_collection("wikipedia")
+        return collection.count() > 0
+    except Exception:
+        return False
+
+
+def query_with_kiwix_context_permanent(question: str) -> str:
+    """Answer a question using Kiwix full-text search as permanent fallback (no ETA).
+
+    Used when no ChromaDB index exists and no indexation is in progress.
+    Returns a simple message if Kiwix returns no results.
+    """
+    results = kiwix_search.search(question)
+    if not results:
+        return "Aucun résultat trouvé pour cette question."
+
+    context_parts = []
+    for r in results:
+        context_parts.append(f"[{r['title']}] {r['content']}")
+    context = "\n\n".join(context_parts)
+
+    user_prompt = f"""Extraits Wikipedia pertinents :
+---
+{context}
+---
+
+Question : {question}
+
+Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+
+    return llm.generate(SYSTEM_PROMPT_KIWIX_PERMANENT, user_prompt)
