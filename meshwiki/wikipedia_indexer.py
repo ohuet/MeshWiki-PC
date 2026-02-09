@@ -243,26 +243,43 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     from libzim.reader import Archive
     from sentence_transformers import SentenceTransformer
 
+    from meshwiki import remote_embeddings
+
     config = _load_config()
     tz = ZoneInfo(config.get("meshtastic_timezone", "UTC"))
     embeddings_config = config["embeddings"]
     vectordb_path = config["vectordb"]["path"]
 
-    logger.info("Loading embedding model: %s", embeddings_config["model"])
     model_name = embeddings_config["model"]
     truncate_dim = embeddings_config.get("truncate_dim")
     model_kwargs = {"torch_dtype": "float16"}
-    try:
-        model = SentenceTransformer(
-            model_name, truncate_dim=truncate_dim, local_files_only=True,
-            model_kwargs=model_kwargs,
-        )
-    except OSError:
-        logger.info("Downloading embedding model: %s (first time)", model_name)
-        model = SentenceTransformer(
-            model_name, truncate_dim=truncate_dim,
-            model_kwargs=model_kwargs,
-        )
+
+    remote_configured = remote_embeddings.is_configured(config)
+    _local_model = None
+
+    def _get_local_model():
+        nonlocal _local_model
+        if _local_model is None:
+            logger.info("Loading local embedding model: %s", model_name)
+            try:
+                _local_model = SentenceTransformer(
+                    model_name, truncate_dim=truncate_dim, local_files_only=True,
+                    model_kwargs=model_kwargs,
+                )
+            except OSError:
+                logger.info("Downloading embedding model: %s (first time)", model_name)
+                _local_model = SentenceTransformer(
+                    model_name, truncate_dim=truncate_dim,
+                    model_kwargs=model_kwargs,
+                )
+        return _local_model
+
+    if not remote_configured:
+        _get_local_model()  # Load immediately (original behaviour)
+    else:
+        remote_config = embeddings_config["remote"]
+        logger.info("Remote embedding configured (%s)", remote_config["base_url"])
+        remote_embeddings.reset()
 
     logger.info("Opening ZIM file: %s", zim_path)
     archive = Archive(str(zim_path))
@@ -404,7 +421,19 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
         progress.set_info("Encodage et insertion de %d chunks dans ChromaDB..." % len(batch_ids))
-        batch_embeddings = model.encode(batch_docs, batch_size=64).tolist()
+
+        batch_embeddings = None
+        if remote_configured:
+            batch_embeddings = remote_embeddings.encode_batch(batch_docs, config)
+            if batch_embeddings is None:
+                logger.warning(
+                    "FALLBACK LOCAL : échec encodage distant, utilisation modèle local (%d chunks)",
+                    len(batch_docs),
+                )
+
+        if batch_embeddings is None:
+            local_model = _get_local_model()
+            batch_embeddings = local_model.encode(batch_docs, batch_size=64).tolist()
         collection.add(
             ids=batch_ids,
             documents=batch_docs,
