@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import queue
 import re
 import subprocess
@@ -154,26 +155,12 @@ def _is_content_article(entry) -> bool:
         return False
 
 
-def _load_checkpoint(collection_name: str, zim_path: Path) -> tuple[int, int, int] | None:
-    """Load a checkpoint file if it matches the current collection and ZIM file.
-
-    Also recovers from a .tmp file left by an interrupted atomic write.
-    Returns (last_entry_index, article_count, chunk_count) or None.
-    """
-    tmp = CHECKPOINT_FILE.with_suffix(".tmp")
-
-    # Recover from interrupted atomic write: .tmp exists but .json doesn't
-    if not CHECKPOINT_FILE.exists() and tmp.exists():
-        try:
-            tmp.replace(CHECKPOINT_FILE)
-        except OSError:
-            return None
-
-    if not CHECKPOINT_FILE.exists():
-        logger.info("Pas de checkpoint trouvé (%s n'existe pas)", CHECKPOINT_FILE)
+def _try_read_checkpoint(path: Path, collection_name: str, zim_path: Path) -> tuple[int, int, int] | None:
+    """Try to read and validate a checkpoint from the given path."""
+    if not path.exists():
         return None
     try:
-        data = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         if (data["collection_name"] == collection_name
                 and data["zim_filename"] == Path(zim_path).name):
             return (data["last_entry_index"], data["article_count"], data["chunk_count"])
@@ -183,7 +170,29 @@ def _load_checkpoint(collection_name: str, zim_path: Path) -> tuple[int, int, in
             data.get("zim_filename"), Path(zim_path).name,
         )
     except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.warning("Checkpoint corrompu (%s), ignoré", e)
+        logger.warning("Checkpoint corrompu dans %s (%s), ignoré", path, e)
+    return None
+
+
+def _load_checkpoint(collection_name: str, zim_path: Path) -> tuple[int, int, int] | None:
+    """Load a checkpoint file if it matches the current collection and ZIM file.
+
+    Tries .json first, then .tmp as fallback (survives if .json was lost
+    during a non-atomic replace on Windows).
+    Returns (last_entry_index, article_count, chunk_count) or None.
+    """
+    result = _try_read_checkpoint(CHECKPOINT_FILE, collection_name, zim_path)
+    if result is not None:
+        return result
+
+    tmp = CHECKPOINT_FILE.with_suffix(".tmp")
+    result = _try_read_checkpoint(tmp, collection_name, zim_path)
+    if result is not None:
+        logger.info("Checkpoint récupéré depuis %s (le .json était absent)", tmp)
+        return result
+
+    if not CHECKPOINT_FILE.exists() and not tmp.exists():
+        logger.info("Pas de checkpoint trouvé (%s n'existe pas)", CHECKPOINT_FILE)
     return None
 
 
@@ -194,24 +203,32 @@ def _save_checkpoint(
     article_count: int,
     chunk_count: int,
 ) -> None:
-    """Save indexing progress to checkpoint file atomically.
+    """Save indexing progress to checkpoint file.
 
-    Writes to a temporary file first, then renames to avoid corruption
-    if the process is interrupted during the write.
+    Writes to .tmp first (with fsync), then copies to .json (with fsync).
+    Both files are kept on disk so _load_checkpoint can recover from either
+    if the process is killed mid-write. This avoids the non-atomic
+    Path.replace() on Windows (which deletes target before renaming source).
     """
+    import shutil
     CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = CHECKPOINT_FILE.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps({
-            "collection_name": collection_name,
-            "zim_filename": Path(zim_path).name,
-            "last_entry_index": last_entry_index,
-            "article_count": article_count,
-            "chunk_count": chunk_count,
-        }),
-        encoding="utf-8",
-    )
-    tmp.replace(CHECKPOINT_FILE)
+    data = json.dumps({
+        "collection_name": collection_name,
+        "zim_filename": Path(zim_path).name,
+        "last_entry_index": last_entry_index,
+        "article_count": article_count,
+        "chunk_count": chunk_count,
+    })
+    # Step 1: write .tmp with fsync
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    # Step 2: copy .tmp → .json with fsync (both files survive)
+    shutil.copy2(tmp, CHECKPOINT_FILE)
+    with open(CHECKPOINT_FILE, "r+b") as f:
+        os.fsync(f.fileno())
 
 
 def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
@@ -395,9 +412,10 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
     producer_thread.join()
 
-    # Indexation complete — remove checkpoint
-    if CHECKPOINT_FILE.exists():
-        CHECKPOINT_FILE.unlink()
+    # Indexation complete — remove checkpoint files
+    for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
+        if cp.exists():
+            cp.unlink()
 
     progress.stop()
     if gpu_locked:
