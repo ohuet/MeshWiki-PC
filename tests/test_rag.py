@@ -225,10 +225,14 @@ def test_query_with_kiwix_context_fallback_no_results(mock_kiwix, mock_llm):
 @patch("meshwiki.rag.chromadb")
 @patch("meshwiki.rag._load_config")
 def test_is_available_true(mock_config, mock_chromadb):
-    """is_available() returns True when the Wikipedia collection exists and has documents."""
-    mock_config.return_value = {"vectordb": {"path": "./test_db"}}
+    """is_available() returns True when the Wikipedia collection exists with correct dimensions."""
+    mock_config.return_value = {
+        "embeddings": {"embedding_dim": 1024},
+        "vectordb": {"path": "./test_db"},
+    }
     mock_collection = MagicMock()
     mock_collection.count.return_value = 100
+    mock_collection.peek.return_value = {"embeddings": [[0.1] * 1024]}
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
     mock_chromadb.PersistentClient.return_value = mock_client
@@ -242,7 +246,10 @@ def test_is_available_true(mock_config, mock_chromadb):
 @patch("meshwiki.rag._load_config")
 def test_is_available_false_no_collection(mock_config, mock_chromadb):
     """is_available() returns False when the collection doesn't exist."""
-    mock_config.return_value = {"vectordb": {"path": "./test_db"}}
+    mock_config.return_value = {
+        "embeddings": {"embedding_dim": 1024},
+        "vectordb": {"path": "./test_db"},
+    }
     mock_client = MagicMock()
     mock_client.get_collection.side_effect = Exception("Collection not found")
     mock_chromadb.PersistentClient.return_value = mock_client
@@ -255,10 +262,33 @@ def test_is_available_false_no_collection(mock_config, mock_chromadb):
 @patch("meshwiki.rag._load_config")
 def test_is_available_false_no_db(mock_config):
     """is_available() returns False when the database path doesn't exist."""
-    mock_config.return_value = {"vectordb": {"path": "./nonexistent_db"}}
+    mock_config.return_value = {
+        "embeddings": {"embedding_dim": 1024},
+        "vectordb": {"path": "./nonexistent_db"},
+    }
 
     with patch("meshwiki.rag.Path") as mock_path:
         mock_path.return_value.exists.return_value = False
+        assert rag_module.is_available() is False
+
+
+@patch("meshwiki.rag.chromadb")
+@patch("meshwiki.rag._load_config")
+def test_is_available_false_wrong_dimension(mock_config, mock_chromadb):
+    """is_available() returns False when embedding dimensions don't match."""
+    mock_config.return_value = {
+        "embeddings": {"embedding_dim": 1024},
+        "vectordb": {"path": "./test_db"},
+    }
+    mock_collection = MagicMock()
+    mock_collection.count.return_value = 100
+    mock_collection.peek.return_value = {"embeddings": [[0.1] * 384]}
+    mock_client = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    with patch("meshwiki.rag.Path") as mock_path:
+        mock_path.return_value.exists.return_value = True
         assert rag_module.is_available() is False
 
 

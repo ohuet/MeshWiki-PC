@@ -310,6 +310,8 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     progress.start()
 
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
+    producer_completed = threading.Event()
+
     def _producer():
         nonlocal article_count, chunk_count
         p_article_count = article_count
@@ -386,6 +388,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                     batch_ids, batch_docs, batch_metadatas,
                     last_entry_idx, p_article_count, p_chunk_count,
                 ))
+            producer_completed.set()
         finally:
             # Sentinel: signals consumer that production is done
             batch_queue.put(None)
@@ -411,6 +414,15 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
         _save_checkpoint(collection_name, zim_path, last_entry_idx, article_count, chunk_count)
 
     producer_thread.join()
+
+    # Check if producer completed normally or was interrupted
+    if not producer_completed.is_set():
+        progress.stop()
+        if gpu_locked:
+            _gpu_unlock_clocks()
+        _set_indexing_eta(None)
+        logger.warning("Indexation interrompue — checkpoint conservé pour reprise")
+        raise RuntimeError("Indexation interrupted")
 
     # Indexation complete — remove checkpoint files
     for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):

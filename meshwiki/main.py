@@ -64,7 +64,11 @@ def _check_ollama(config: dict) -> bool:
 
 
 def _index_exists(config: dict) -> bool:
-    """Check if a ChromaDB index exists."""
+    """Check if a usable ChromaDB index exists.
+
+    Verifies that the collection exists, has documents, and uses
+    embeddings compatible with the current model configuration.
+    """
     db_path = Path(config["vectordb"]["path"])
     if not db_path.exists():
         return False
@@ -73,7 +77,21 @@ def _index_exists(config: dict) -> bool:
     try:
         client = chromadb.PersistentClient(path=str(db_path))
         collection = client.get_collection("wikipedia")
-        return collection.count() > 0
+        if collection.count() == 0:
+            return False
+        # Verify embedding dimensions match current model
+        expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
+        if expected_dim:
+            sample = collection.peek(limit=1)
+            if sample["embeddings"]:
+                actual_dim = len(sample["embeddings"][0])
+                if actual_dim != expected_dim:
+                    logger.warning(
+                        "Index incompatible : dimension %d (attendu %d) — réindexation nécessaire",
+                        actual_dim, expected_dim,
+                    )
+                    return False
+        return True
     except Exception:
         return False
 

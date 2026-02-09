@@ -16,6 +16,7 @@ wikipedia:
 
 embeddings:
   model: "BAAI/bge-m3"
+  embedding_dim: 1024         # dimension des embeddings du modèle
   chunk_size: 500             # tokens par chunk d'article
   chunk_overlap: 50           # chevauchement entre chunks
 

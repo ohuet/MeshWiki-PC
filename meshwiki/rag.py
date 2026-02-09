@@ -195,7 +195,11 @@ Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis 
 
 
 def is_available() -> bool:
-    """Check if the ChromaDB Wikipedia index is available and contains documents."""
+    """Check if the ChromaDB Wikipedia index is available and compatible.
+
+    Returns False if the collection doesn't exist, is empty, or uses
+    embeddings with a different dimension than the current model.
+    """
     try:
         config = _load_config()
         db_path = Path(config["vectordb"]["path"])
@@ -203,7 +207,16 @@ def is_available() -> bool:
             return False
         client = chromadb.PersistentClient(path=str(db_path))
         collection = client.get_collection("wikipedia")
-        return collection.count() > 0
+        if collection.count() == 0:
+            return False
+        expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
+        if expected_dim:
+            sample = collection.peek(limit=1)
+            if sample["embeddings"]:
+                actual_dim = len(sample["embeddings"][0])
+                if actual_dim != expected_dim:
+                    return False
+        return True
     except Exception:
         return False
 
