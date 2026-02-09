@@ -11,6 +11,7 @@ _zim_path: str | None = None
 _zim_lock = threading.Lock()
 _archive = None
 _archive_path: str | None = None
+_disabled = False
 
 # French stop words — stripped from queries before searching
 _STOP_WORDS = frozenset(
@@ -40,8 +41,16 @@ def set_zim_path(path) -> None:
             _archive_path = None
 
 
+def set_disabled(value: bool) -> None:
+    """Disable Kiwix search entirely (used by --nowiki flag)."""
+    global _disabled
+    _disabled = value
+
+
 def get_zim_path() -> str | None:
-    """Return the current ZIM file path, or None if not set."""
+    """Return the current ZIM file path, or None if not set or disabled."""
+    if _disabled:
+        return None
     with _zim_lock:
         return _zim_path
 

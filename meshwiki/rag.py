@@ -52,6 +52,7 @@ Termine ta réponse par : "[Recherche textuelle Kiwix]" """
 
 _model = None
 _collection = None
+_force_unavailable = False
 
 
 def _load_config() -> dict:
@@ -197,12 +198,20 @@ Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis 
     return llm.generate(system, user_prompt)
 
 
+def set_force_unavailable(value: bool) -> None:
+    """Force is_available() to return False (used by --noindex flag)."""
+    global _force_unavailable
+    _force_unavailable = value
+
+
 def is_available() -> bool:
     """Check if the ChromaDB Wikipedia index is available and compatible.
 
-    Returns False if the collection doesn't exist, is empty, or uses
-    embeddings with a different dimension than the current model.
+    Returns False if the collection doesn't exist, is empty, uses
+    embeddings with a different dimension, or --noindex is active.
     """
+    if _force_unavailable:
+        return False
     try:
         config = _load_config()
         db_path = Path(config["vectordb"]["path"])

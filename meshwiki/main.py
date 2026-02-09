@@ -126,6 +126,16 @@ def _wants_offline() -> bool:
     return any(arg in ("/offline", "-offline", "--offline") for arg in sys.argv[1:])
 
 
+def _wants_noindex() -> bool:
+    """Check if the user requested to ignore the ChromaDB index."""
+    return any(arg in ("/noindex", "-noindex", "--noindex") for arg in sys.argv[1:])
+
+
+def _wants_nowiki() -> bool:
+    """Check if the user requested to ignore the ZIM file."""
+    return any(arg in ("/nowiki", "-nowiki", "--nowiki") for arg in sys.argv[1:])
+
+
 def _find_existing_zim(config: dict) -> Path | None:
     """Find an existing .zim file in the temp directory."""
     temp_dir = Path(config["updater"]["temp_dir"])
@@ -236,8 +246,22 @@ def main() -> None:
     # Connect to Meshtastic
     bridge = MeshtasticBridge(rate_limiter)
 
+    # Apply --noindex / --nowiki flags
+    noindex = _wants_noindex()
+    nowiki = _wants_nowiki()
+    offline = _wants_offline()
+
+    if noindex:
+        from meshwiki import rag
+        rag.set_force_unavailable(True)
+        logger.info("--noindex : index ChromaDB désactivé")
+
+    if nowiki:
+        kiwix_search.set_disabled(True)
+        logger.info("--nowiki : fichier ZIM désactivé")
+
     # Check/create index
-    if _index_exists(config):
+    if not noindex and _index_exists(config):
         logger.info("Index ChromaDB disponible")
         # Update check only if --update is passed
         if _wants_update() or _wants_indexation():
@@ -248,21 +272,24 @@ def main() -> None:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
                 _run_background_download(config)
     else:
-        zim_path = _find_existing_zim(config)
-        if zim_path:
-            kiwix_search.set_zim_path(zim_path)
-            logger.info("Pas d'index ChromaDB — recherche Kiwix activée comme fallback (%s)", zim_path.name)
-        else:
-            if _wants_offline():
-                logger.info("Aucun index ni ZIM trouvé — mode offline, pas de téléchargement. Le LLM répondra seul.")
-            else:
-                logger.info("Aucun index ni ZIM trouvé — téléchargement en arrière-plan...")
+        if not nowiki:
+            zim_path = _find_existing_zim(config)
+            if zim_path:
+                kiwix_search.set_zim_path(zim_path)
+                logger.info("Recherche Kiwix activée comme fallback (%s)", zim_path.name)
+            elif not offline:
+                logger.info("Aucun ZIM trouvé — téléchargement en arrière-plan...")
                 _run_background_download(config)
+            else:
+                logger.info("Aucun index ni ZIM trouvé — mode offline, le LLM répondra seul.")
+        else:
+            if not offline and not noindex:
+                logger.info("Le LLM répondra seul (ZIM désactivé, pas d'index)")
 
-        if _wants_indexation():
+        if not noindex and _wants_indexation():
             logger.info("Indexation demandée, lancement en arrière-plan...")
             _run_background_update(config)
-        else:
+        elif not noindex:
             logger.info("Lancez avec --index pour créer l'index ChromaDB")
 
     # Graceful shutdown

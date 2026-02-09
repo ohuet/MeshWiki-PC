@@ -108,3 +108,39 @@ def test_wants_offline_without_flag():
     """_wants_offline returns False when no offline flag is in sys.argv."""
     with patch.object(sys, "argv", ["meshwiki"]):
         assert main_module._wants_offline() is False
+
+
+def test_wants_noindex_with_flag():
+    """_wants_noindex returns True when --noindex is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "--noindex"]):
+        assert main_module._wants_noindex() is True
+
+
+def test_wants_noindex_with_slash_flag():
+    """_wants_noindex returns True when /noindex is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "/noindex"]):
+        assert main_module._wants_noindex() is True
+
+
+def test_wants_noindex_without_flag():
+    """_wants_noindex returns False when no noindex flag is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki"]):
+        assert main_module._wants_noindex() is False
+
+
+def test_wants_nowiki_with_flag():
+    """_wants_nowiki returns True when --nowiki is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "--nowiki"]):
+        assert main_module._wants_nowiki() is True
+
+
+def test_wants_nowiki_with_slash_flag():
+    """_wants_nowiki returns True when /nowiki is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki", "/nowiki"]):
+        assert main_module._wants_nowiki() is True
+
+
+def test_wants_nowiki_without_flag():
+    """_wants_nowiki returns False when no nowiki flag is in sys.argv."""
+    with patch.object(sys, "argv", ["meshwiki"]):
+        assert main_module._wants_nowiki() is False

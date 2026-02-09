@@ -10,6 +10,7 @@ def setup_function():
     ks.set_zim_path(None)
     ks._archive = None
     ks._archive_path = None
+    ks.set_disabled(False)
 
 
 def test_set_and_get_zim_path():
@@ -24,6 +25,16 @@ def test_search_no_zim_returns_empty():
     """Without a ZIM path set, search returns an empty list."""
     result = ks.search("test query")
     assert result == []
+
+
+def test_disabled_hides_zim_path():
+    """When disabled, get_zim_path returns None even if a path is set."""
+    ks.set_zim_path("/tmp/test.zim")
+    assert ks.get_zim_path() == "/tmp/test.zim"
+    ks.set_disabled(True)
+    assert ks.get_zim_path() is None
+    ks.set_disabled(False)
+    assert ks.get_zim_path() == "/tmp/test.zim"
 
 
 def test_clean_html_strips_tags():

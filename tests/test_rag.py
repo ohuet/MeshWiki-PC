@@ -224,6 +224,30 @@ def test_query_with_kiwix_context_fallback_no_results(mock_kiwix, mock_llm):
 
 @patch("meshwiki.rag.chromadb")
 @patch("meshwiki.rag._load_config")
+def test_is_available_false_force_unavailable(mock_config, mock_chromadb):
+    """is_available() returns False when set_force_unavailable(True) is active."""
+    mock_config.return_value = {
+        "embeddings": {"embedding_dim": 1024},
+        "vectordb": {"path": "./test_db"},
+    }
+    mock_collection = MagicMock()
+    mock_collection.count.return_value = 100
+    mock_collection.peek.return_value = {"embeddings": [[0.1] * 1024]}
+    mock_client = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    rag_module.set_force_unavailable(True)
+    try:
+        with patch("meshwiki.rag.Path") as mock_path:
+            mock_path.return_value.exists.return_value = True
+            assert rag_module.is_available() is False
+    finally:
+        rag_module.set_force_unavailable(False)
+
+
+@patch("meshwiki.rag.chromadb")
+@patch("meshwiki.rag._load_config")
 def test_is_available_true(mock_config, mock_chromadb):
     """is_available() returns True when the Wikipedia collection exists with correct dimensions."""
     mock_config.return_value = {
