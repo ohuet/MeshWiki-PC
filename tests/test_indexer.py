@@ -96,7 +96,7 @@ def test_is_content_article_valid():
 
 @patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
-def test_index_zim_processes_articles(mock_chromadb, mock_config):
+def test_index_zim_processes_articles(mock_chromadb, mock_config, tmp_path):
     """Integration-style test with mocked ZIM archive."""
     mock_config.return_value = {
         "embeddings": {"model": "test-model", "chunk_size": 50, "chunk_overlap": 10},
@@ -127,7 +127,8 @@ def test_index_zim_processes_articles(mock_chromadb, mock_config):
     mock_archive._get_entry_by_id.return_value = mock_entry
 
     with patch("libzim.reader.Archive", return_value=mock_archive), \
-         patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model), \
+         patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", tmp_path / "cp.json"):
         from meshwiki.wikipedia_indexer import index_zim
         stats = index_zim(Path("test.zim"), "test_collection")
 
@@ -367,8 +368,50 @@ def test_load_checkpoint_recovers_from_tmp(tmp_path):
 
 @patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
+def test_index_zim_passes_show_progress_bar_false(mock_chromadb, mock_config, tmp_path):
+    """model.encode() is called with show_progress_bar=False to suppress tqdm."""
+    mock_config.return_value = {
+        "embeddings": {"model": "test-model", "chunk_size": 50, "chunk_overlap": 10},
+        "vectordb": {"path": "./test_db"},
+    }
+
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_client.get_or_create_collection.return_value = mock_collection
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
+
+    mock_entry = MagicMock()
+    mock_entry.is_redirect = False
+    mock_entry.path = "A/Test"
+    mock_entry.title = "Test Article"
+    mock_item = MagicMock()
+    mock_item.content = b"<p>" + b"This is a test article with enough content. " * 20 + b"</p>"
+    mock_entry.get_item.return_value = mock_item
+
+    mock_archive = MagicMock()
+    mock_archive.entry_count = 1
+    mock_archive._get_entry_by_id.return_value = mock_entry
+
+    with patch("libzim.reader.Archive", return_value=mock_archive), \
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model), \
+         patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", tmp_path / "cp.json"):
+        from meshwiki.wikipedia_indexer import index_zim
+        index_zim(Path("test.zim"), "test_spb_col")
+
+    # Verify show_progress_bar=False was passed
+    for call in mock_model.encode.call_args_list:
+        assert call.kwargs.get("show_progress_bar") is False, (
+            f"encode() called without show_progress_bar=False: {call}"
+        )
+
+
+@patch("meshwiki.config.load_config")
+@patch("meshwiki.wikipedia_indexer.chromadb")
 @patch("meshwiki.wikipedia_indexer._set_indexing_eta")
-def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config):
+def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config, tmp_path):
     """ETA stored by index_zim uses the timezone from config (Indian/Reunion = UTC+4)."""
     mock_config.return_value = {
         "meshtastic_timezone": "Indian/Reunion",
@@ -388,7 +431,8 @@ def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config):
     mock_archive.entry_count = 0  # No entries — just check the initial ETA
 
     with patch("libzim.reader.Archive", return_value=mock_archive), \
-         patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model), \
+         patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", tmp_path / "cp.json"):
         from meshwiki.wikipedia_indexer import index_zim
         index_zim(Path("test.zim"), "test_tz_col")
 

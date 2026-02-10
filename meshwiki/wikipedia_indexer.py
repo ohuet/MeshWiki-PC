@@ -483,6 +483,20 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             local_model = _get_local_model()
             local_lock = threading.Lock()
 
+            sb_done = 0
+            sb_done_lock = threading.Lock()
+            total_sb = len(sb_list)
+
+            def _update_hybrid_progress():
+                nonlocal sb_done
+                with sb_done_lock:
+                    sb_done += 1
+                    done = sb_done
+                progress.set_info(
+                    "Encodage hybride : %d/%d sous-lots (%d/%d chunks)"
+                    % (done, total_sb, done * remote_batch_size, len(batch_docs))
+                )
+
             def _remote_worker():
                 while True:
                     try:
@@ -496,8 +510,11 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                             len(docs),
                         )
                         with local_lock:
-                            embs = local_model.encode(docs, batch_size=64).tolist()
+                            embs = local_model.encode(
+                                docs, batch_size=64, show_progress_bar=False,
+                            ).tolist()
                     sb_results[idx] = embs
+                    _update_hybrid_progress()
 
             def _local_worker():
                 while True:
@@ -506,8 +523,11 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                     except queue.Empty:
                         return
                     with local_lock:
-                        embs = local_model.encode(docs, batch_size=64).tolist()
+                        embs = local_model.encode(
+                            docs, batch_size=64, show_progress_bar=False,
+                        ).tolist()
                     sb_results[idx] = embs
+                    _update_hybrid_progress()
 
             with ThreadPoolExecutor(max_workers=max_concurrent + local_workers) as pool:
                 futs = []
@@ -524,7 +544,16 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         elif remote_configured:
             # Remote-only mode (with fallback)
-            batch_embeddings = remote_embeddings.encode_batch(batch_docs, cfg)
+            def _on_remote_sub_batch(done: int, total: int):
+                remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
+                progress.set_info(
+                    "Encodage distant : %d/%d sous-lots (%d/%d chunks)"
+                    % (done, total, done * remote_batch_size, len(batch_docs))
+                )
+
+            batch_embeddings = remote_embeddings.encode_batch(
+                batch_docs, cfg, on_sub_batch=_on_remote_sub_batch,
+            )
             if batch_embeddings is None:
                 logger.warning(
                     "FALLBACK LOCAL : échec encodage distant, utilisation modèle local (%d chunks)",
@@ -532,14 +561,14 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                 )
                 local_model = _get_local_model()
                 batch_embeddings = local_model.encode(
-                    batch_docs, batch_size=64,
+                    batch_docs, batch_size=64, show_progress_bar=False,
                 ).tolist()
 
         else:
             # Local-only mode
             local_model = _get_local_model()
             batch_embeddings = local_model.encode(
-                batch_docs, batch_size=64,
+                batch_docs, batch_size=64, show_progress_bar=False,
             ).tolist()
 
         write_queue.put((

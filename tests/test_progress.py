@@ -120,3 +120,41 @@ def test_stop_without_start():
         mock_sys.stderr.isatty = lambda: True
         display = ProgressDisplay()
         display.stop()  # Should not raise
+
+
+def test_file_handler_preserved_during_display():
+    """A file handler (non-stderr) stays active throughout start/stop cycle."""
+    stderr = io.StringIO()
+    stderr.isatty = lambda: True  # type: ignore[attr-defined]
+
+    root = logging.getLogger()
+    original_handlers = list(root.handlers)
+
+    # Add a file-like handler (stream is NOT stderr)
+    file_stream = io.StringIO()
+    file_handler = logging.StreamHandler(file_stream)
+    file_handler.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(file_handler)
+
+    try:
+        with patch("meshwiki.progress.sys") as mock_sys:
+            mock_sys.stderr = stderr
+            display = ProgressDisplay()
+            display.start()
+
+            # file_handler must still be in root.handlers
+            assert file_handler in root.handlers
+
+            # Log a message — it should reach the file handler
+            test_logger = logging.getLogger("test.file_handler")
+            test_logger.setLevel(logging.DEBUG)
+            test_logger.info("message during display")
+            assert "message during display" in file_stream.getvalue()
+
+            display.stop()
+
+            # file_handler must still be present after stop
+            assert file_handler in root.handlers
+    finally:
+        root.removeHandler(file_handler)
+        root.handlers = original_handlers

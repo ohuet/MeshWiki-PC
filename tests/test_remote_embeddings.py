@@ -427,3 +427,53 @@ def test_default_api_type_is_openai(MockSession):
     encode_batch(["test"], MOCK_CONFIG)
 
     assert "/v1/embeddings" in mock_session.post.call_args[0][0]
+
+
+# --- on_sub_batch callback ---
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_on_sub_batch_callback_called(MockSession):
+    """on_sub_batch is called once per sub-batch with (completed, total)."""
+    texts = [f"text {i}" for i in range(600)]
+
+    def side_effect(*args, **kwargs):
+        sub_batch = kwargs.get("json", {}).get("input", [])
+        resp = MagicMock()
+        resp.json.return_value = _make_response(len(sub_batch))
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.side_effect = side_effect
+    MockSession.return_value = mock_session
+
+    callback_calls = []
+    def on_sub_batch(completed, total):
+        callback_calls.append((completed, total))
+
+    result = encode_batch(texts, MOCK_CONFIG, on_sub_batch=on_sub_batch)
+
+    assert result is not None
+    assert len(callback_calls) == 3  # 256 + 256 + 88 = 3 sub-batches
+    # All calls should have total=3
+    assert all(total == 3 for _, total in callback_calls)
+    # completed values should be 1, 2, 3 (in some order due to concurrency)
+    assert sorted(c for c, _ in callback_calls) == [1, 2, 3]
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_on_sub_batch_not_called_when_none(MockSession):
+    """No crash when on_sub_batch is None (default)."""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_response(1)
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
+
+    result = encode_batch(["test"], MOCK_CONFIG)
+    assert result is not None

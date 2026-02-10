@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -142,7 +143,7 @@ def encode_single(texts: list[str], params: dict) -> list[list[float]] | None:
 
     elapsed = time.monotonic() - t0
     rate = len(texts) / elapsed if elapsed > 0 else 0
-    logger.info(
+    logger.debug(
         "Remote embedding: %d texts in %.1fs (%.0f texts/s)",
         len(texts), elapsed, rate,
     )
@@ -150,11 +151,18 @@ def encode_single(texts: list[str], params: dict) -> list[list[float]] | None:
     return embeddings
 
 
-def encode_batch(texts: list[str], config: dict) -> list[list[float]] | None:
+def encode_batch(
+    texts: list[str],
+    config: dict,
+    on_sub_batch: Callable[[int, int], None] | None = None,
+) -> list[list[float]] | None:
     """Encode texts via a remote embedding API.
 
     Splits texts into sub-batches sent concurrently using ``max_concurrent``
     threads (default 4). Uses ``requests.Session`` for connection reuse.
+
+    If *on_sub_batch* is provided, it is called after each sub-batch completes
+    with ``(completed_count, total_count)``.
 
     Returns a list of embedding vectors, or None on any failure.
     """
@@ -180,11 +188,15 @@ def encode_batch(texts: list[str], config: dict) -> list[list[float]] | None:
             for sb_start, sb_texts in sub_batches
         }
 
+        completed = 0
         for future in as_completed(futures):
             result = future.result()
             if result is None:
                 return None
             results[futures[future]] = result
+            completed += 1
+            if on_sub_batch is not None:
+                on_sub_batch(completed, len(sub_batches))
 
     # Concatenate in sub-batch order
     all_embeddings = []

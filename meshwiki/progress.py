@@ -44,7 +44,10 @@ class ProgressDisplay:
                 datefmt="%Y-%m-%d %H:%M:%S",
             ))
 
-            root.handlers = [handler]
+            # Keep non-stderr handlers (e.g. RotatingFileHandler) active
+            kept = [h for h in root.handlers
+                    if getattr(h, 'stream', None) is not sys.stderr]
+            root.handlers = [handler] + kept
 
             # Reserve two lines
             sys.stderr.write("\n\n")
@@ -65,7 +68,13 @@ class ProgressDisplay:
             sys.stderr.flush()
 
             root = logging.getLogger()
-            root.handlers = list(self._original_handlers)
+            # Remove _StatusHandler, keep file handlers that were active during display
+            non_stderr = [h for h in root.handlers
+                          if not isinstance(h, _StatusHandler)]
+            # Re-add original stderr handlers that were removed in start()
+            stderr_originals = [h for h in self._original_handlers
+                                if getattr(h, 'stream', None) is sys.stderr]
+            root.handlers = stderr_originals + non_stderr
             self._original_handlers = []
 
     def set_progress(self, percent: float, articles: int, eta_dur: str, eta_time: str):
