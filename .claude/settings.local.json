@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__exa__get_code_context_exa",
+      "Bash(python -m pytest:*)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" status)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" diff)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" log --oneline -5)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/remote_embeddings.py tests/test_remote_embeddings.py meshwiki/wikipedia_indexer.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" commit -m \"$\\(cat <<''EOF''\nEmbedding distant via API OpenAI-compatible pour l''indexation\n\n- meshwiki/remote_embeddings.py :\n  nouveau module client HTTP pour /v1/embeddings\n  sous-lots configurables, validation de dimension, clé API optionnelle \\(Bearer token\\)\n  retourne None en cas d''échec \\(timeout, connexion, HTTP, dimension\\)\n- meshwiki/wikipedia_indexer.py :\n  chargement paresseux du modèle local \\(économise ~30s si remote fonctionne\\)\n  fallback local par batch avec warning à chaque échec distant\n- tests/test_remote_embeddings.py :\n  13 tests unitaires \\(config, succès, erreurs, tri, sous-lots, URL, clé API\\)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "mcp__exa__web_search_exa",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" log --oneline -3)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add config.yaml meshwiki/remote_embeddings.py tests/test_remote_embeddings.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" commit -m \"$\\(cat <<''EOF''\nSupport API Ollama native + clé API + meilleur logging des erreurs\n\n- meshwiki/remote_embeddings.py :\n  ajout api_type \"ollama\" \\(POST /api/embed\\) en plus de \"openai\" \\(/v1/embeddings\\)\n  clé API optionnelle envoyée en Bearer token\n  log de l''exception complète sur erreur de connexion\n- tests/test_remote_embeddings.py :\n  5 nouveaux tests pour le format Ollama \\(URL, encodage, dimension, sous-lots\\)\n  test du défaut api_type=openai\n- config.yaml :\n  section remote avec api_type ollama, clé API commentée\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(pytest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)",
+      "Bash(dir:*)"
+    ]
+  }
+}
