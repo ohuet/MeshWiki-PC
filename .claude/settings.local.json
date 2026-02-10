@@ -19,7 +19,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git reset:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/collection_state.py meshwiki/wikipedia_updater.py meshwiki/rag.py meshwiki/main.py meshwiki/wikipedia_indexer.py tests/test_updater.py tests/test_collection_state.py)"
     ]
   }
 }
