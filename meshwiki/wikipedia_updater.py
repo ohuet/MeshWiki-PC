@@ -125,13 +125,20 @@ class WikipediaUpdater:
         temp_dir.mkdir(parents=True, exist_ok=True)
         dest = temp_dir / filename
 
+        # ZIM already present on disk (e.g. LAST_UPDATE_FILE missing but file kept)
+        if dest.exists():
+            logger.info("ZIM file already present: %s", dest.name)
+            return dest
+
+        download_path = dest.with_suffix(".zim.download")
+
         logger.info("Downloading %s ...", filename)
 
         try:
             headers = {}
             existing_size = 0
-            if dest.exists():
-                existing_size = dest.stat().st_size
+            if download_path.exists():
+                existing_size = download_path.stat().st_size
                 headers["Range"] = f"bytes={existing_size}-"
                 logger.info("Resuming download from byte %d", existing_size)
 
@@ -139,6 +146,7 @@ class WikipediaUpdater:
 
             if response.status_code == 416:
                 logger.info("File already fully downloaded")
+                download_path.replace(dest)
                 return dest
 
             response.raise_for_status()
@@ -147,7 +155,7 @@ class WikipediaUpdater:
             total = int(response.headers.get("content-length", 0)) + existing_size
             downloaded = existing_size
 
-            with open(dest, mode) as f:
+            with open(download_path, mode) as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
                     downloaded += len(chunk)
@@ -155,6 +163,8 @@ class WikipediaUpdater:
                         progress = (downloaded / total) * 100
                         logger.info("Download progress: %.1f%%", progress)
 
+            # Download complete — atomically replace the old ZIM
+            download_path.replace(dest)
             logger.info("Download complete: %s", dest)
             return dest
 
@@ -222,19 +232,13 @@ class WikipediaUpdater:
         finally:
             kiwix_search.set_zim_path(None)
 
-    def cleanup(self, zim_path: Path) -> None:
-        """Remove downloaded ZIM and temp files."""
-        try:
-            if zim_path.exists():
-                size_mb = zim_path.stat().st_size / (1024 * 1024)
-                zim_path.unlink()
-                logger.info("Deleted %s (%.1f MB freed)", zim_path.name, size_mb)
-        except OSError as e:
-            logger.error("Failed to delete %s: %s", zim_path, e)
-
+    def cleanup(self) -> None:
+        """Remove temporary download files (but keep the .zim as fallback)."""
         temp_dir = Path(self.updater_config["temp_dir"])
         if temp_dir.exists():
             for f in temp_dir.iterdir():
+                if f.suffix == ".zim":
+                    continue
                 try:
                     f.unlink()
                     logger.info("Cleaned up temp file: %s", f.name)
@@ -252,8 +256,8 @@ class WikipediaUpdater:
         logger.info("Nouveau dump disponible, ré-indexation en cours...")
         success = self.reindex(zim_path)
 
+        self.cleanup()
         if success:
-            self.cleanup(zim_path)
             logger.info("Base Wikipedia mise à jour avec succès")
         else:
             logger.info("Échec de la mise à jour, ancien index conservé")

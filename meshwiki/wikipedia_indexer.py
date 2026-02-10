@@ -274,12 +274,21 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                 )
         return _local_model
 
+    local_workers = 0
     if not remote_configured:
         _get_local_model()  # Load immediately (original behaviour)
     else:
         remote_config = embeddings_config["remote"]
+        local_workers = remote_config.get("local_workers", 0)
+        max_concurrent = remote_config.get("max_concurrent", 4)
         logger.info("Remote embedding configured (%s)", remote_config["base_url"])
         remote_embeddings.reset()
+        if local_workers > 0:
+            logger.info(
+                "Hybrid mode: %d remote + %d local workers",
+                max_concurrent, local_workers,
+            )
+            _get_local_model()  # Also need local model in hybrid mode
 
     logger.info("Opening ZIM file: %s", zim_path)
     archive = Archive(str(zim_path))
@@ -319,12 +328,21 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     logger.info("Fichier ZIM : %d entrées à parcourir", entry_count)
 
     start_time = time.monotonic()
-    _set_indexing_eta(datetime.now(tz) + timedelta(hours=1))
+    remaining_entries = entry_count - start_index
+    if remaining_entries > 0 and start_index > 0:
+        # Rough initial ETA: assume ~200 entries/s (adjusted after first batch)
+        _set_indexing_eta(datetime.now(tz) + timedelta(seconds=remaining_entries / 200))
+    else:
+        _set_indexing_eta(datetime.now(tz) + timedelta(hours=1))
 
     gpu_locked = _gpu_lock_clocks()
 
     progress = ProgressDisplay()
     progress.start()
+    if start_index > 0:
+        progress.set_progress(
+            start_index / entry_count * 100, article_count, "?", "?",
+        )
 
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
     producer_completed = threading.Event()
@@ -422,18 +440,83 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
         batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
         progress.set_info("Encodage et insertion de %d chunks dans ChromaDB..." % len(batch_ids))
 
-        batch_embeddings = None
-        if remote_configured:
+        if remote_configured and local_workers > 0:
+            # Hybrid mode: work-stealing between remote and local GPU
+            from concurrent.futures import ThreadPoolExecutor
+            remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
+            remote_params = remote_embeddings.prepare(config)
+
+            # Split into sub-batches
+            sb_list = []
+            for sb_start in range(0, len(batch_docs), remote_batch_size):
+                sb_list.append(batch_docs[sb_start : sb_start + remote_batch_size])
+
+            work_queue = queue.Queue()
+            for i, sb in enumerate(sb_list):
+                work_queue.put((i, sb))
+
+            sb_results: list[list[list[float]] | None] = [None] * len(sb_list)
+            local_model = _get_local_model()
+            local_lock = threading.Lock()
+
+            def _remote_worker():
+                while True:
+                    try:
+                        idx, docs = work_queue.get_nowait()
+                    except queue.Empty:
+                        return
+                    embs = remote_embeddings.encode_single(docs, remote_params)
+                    if embs is None:
+                        logger.warning(
+                            "FALLBACK LOCAL : échec distant, encodage local (%d chunks)",
+                            len(docs),
+                        )
+                        with local_lock:
+                            embs = local_model.encode(docs, batch_size=64).tolist()
+                    sb_results[idx] = embs
+
+            def _local_worker():
+                while True:
+                    try:
+                        idx, docs = work_queue.get_nowait()
+                    except queue.Empty:
+                        return
+                    with local_lock:
+                        embs = local_model.encode(docs, batch_size=64).tolist()
+                    sb_results[idx] = embs
+
+            with ThreadPoolExecutor(max_workers=max_concurrent + local_workers) as pool:
+                futs = []
+                for _ in range(max_concurrent):
+                    futs.append(pool.submit(_remote_worker))
+                for _ in range(local_workers):
+                    futs.append(pool.submit(_local_worker))
+                for f in futs:
+                    f.result()
+
+            batch_embeddings = []
+            for r in sb_results:
+                batch_embeddings.extend(r)
+
+        elif remote_configured:
+            # Remote-only mode (with fallback)
             batch_embeddings = remote_embeddings.encode_batch(batch_docs, config)
             if batch_embeddings is None:
                 logger.warning(
                     "FALLBACK LOCAL : échec encodage distant, utilisation modèle local (%d chunks)",
                     len(batch_docs),
                 )
+                local_model = _get_local_model()
+                batch_embeddings = local_model.encode(
+                    batch_docs, batch_size=64,
+                ).tolist()
 
-        if batch_embeddings is None:
+        else:
+            # Local-only mode
             local_model = _get_local_model()
-            batch_embeddings = local_model.encode(batch_docs, batch_size=64).tolist()
+            batch_embeddings = local_model.encode(
+                batch_docs, batch_size=64,
+            ).tolist()
         collection.add(
             ids=batch_ids,
             documents=batch_docs,

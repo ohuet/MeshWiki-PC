@@ -98,6 +98,27 @@ def test_download_dump_returns_none_when_no_url(mock_config):
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_download_skips_if_zim_already_exists(mock_get, mock_file, mock_config, tmp_path):
+    """If the .zim file is already on disk, skip download entirely."""
+    mock_file.exists.return_value = False  # LAST_UPDATE_FILE missing
+
+    zim_file = tmp_path / "wiki_2025.zim"
+    zim_file.write_bytes(b"existing zim")
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/wiki_2025.zim", "wiki_2025.zim")):
+        result = updater.download_dump()
+
+    assert result == zim_file
+    mock_get.assert_not_called()  # No HTTP request made
+
+
+@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.reset_collection")
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.chromadb")
@@ -142,28 +163,81 @@ def test_reindex_failure_preserves_old_index(mock_chromadb, mock_index_zim, mock
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
-def test_cleanup_deletes_zim_file(mock_config, tmp_path):
+def test_cleanup_keeps_zim_file(mock_config, tmp_path):
+    """cleanup() must NOT delete .zim files (kept as Kiwix fallback)."""
     zim_file = tmp_path / "test.zim"
     zim_file.write_bytes(b"x" * 1024)
 
     updater = WikipediaUpdater()
     updater.updater_config["temp_dir"] = str(tmp_path)
-    updater.cleanup(zim_file)
+    updater.cleanup()
 
-    assert not zim_file.exists()
+    assert zim_file.exists()
 
 
 @patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
-def test_cleanup_removes_temp_files(mock_config, tmp_path):
+def test_cleanup_removes_temp_files_but_not_zim(mock_config, tmp_path):
     temp_dir = tmp_path / "tmp"
     temp_dir.mkdir()
-    (temp_dir / "partial.zim.part").write_bytes(b"partial")
+    (temp_dir / "partial.zim.download").write_bytes(b"partial")
+    zim_file = temp_dir / "wiki.zim"
+    zim_file.write_bytes(b"zim data")
 
     updater = WikipediaUpdater()
     updater.updater_config["temp_dir"] = str(temp_dir)
-    updater.cleanup(MagicMock(exists=lambda: False))
+    updater.cleanup()
 
-    assert not list(temp_dir.iterdir())
+    remaining = [f.name for f in temp_dir.iterdir()]
+    assert "wiki.zim" in remaining
+    assert "partial.zim.download" not in remaining
+
+
+@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_download_replaces_old_zim_only_after_completion(mock_get, mock_file, mock_config, tmp_path):
+    """Download writes to .zim.download, then replaces the .zim atomically."""
+    mock_file.exists.return_value = False
+
+    # Simulate a small download
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-length": "4"}
+    mock_response.iter_content.return_value = [b"data"]
+    mock_response.raise_for_status = MagicMock()
+    mock_get.return_value = mock_response
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/wiki.zim", "wiki_2025.zim")):
+        result = updater.download_dump()
+
+    # Final .zim exists, .download does not
+    assert result == tmp_path / "wiki_2025.zim"
+    assert result.exists()
+    assert not (tmp_path / "wiki_2025.zim.download").exists()
+
+
+@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_download_failure_does_not_create_partial_zim(mock_get, mock_file, mock_config, tmp_path):
+    """If download fails for a new version, no .zim is created."""
+    mock_file.exists.return_value = False
+    import requests as req
+    mock_get.side_effect = req.exceptions.ConnectionError("network down")
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/wiki_2026.zim", "wiki_2026.zim")):
+        result = updater.download_dump()
+
+    assert result is None
+    assert not (tmp_path / "wiki_2026.zim").exists()
 
 
 def test_copy_collection_copies_all_data():

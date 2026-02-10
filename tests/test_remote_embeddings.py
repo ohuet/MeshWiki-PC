@@ -4,8 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-import meshwiki.remote_embeddings as remote_mod
-from meshwiki.remote_embeddings import encode_batch, is_configured, reset
+from meshwiki.remote_embeddings import (
+    encode_batch, encode_single, is_configured, prepare, reset,
+)
 
 
 MOCK_CONFIG = {
@@ -57,13 +58,13 @@ MOCK_CONFIG_NO_REMOTE = {
 }
 
 
-def _make_response(texts, dim=1024, shuffle=False):
-    """Build a mock OpenAI API response with embeddings of the given dimension."""
+def _make_response(count, dim=1024, shuffle=False):
+    """Build a mock OpenAI API response."""
     data = []
-    indices = list(range(len(texts)))
+    indices = list(range(count))
     if shuffle:
         indices = list(reversed(indices))
-    for i, idx in enumerate(indices):
+    for idx in indices:
         data.append({"index": idx, "embedding": [0.1] * dim})
     return {"data": data}
 
@@ -73,8 +74,19 @@ def _make_ollama_response(count, dim=1024):
     return {"embeddings": [[0.1] * dim for _ in range(count)]}
 
 
+def _mock_session(response_fn):
+    """Create a mock Session whose .post() returns responses from response_fn."""
+    session = MagicMock()
+    session.headers = {}
+    session.post.side_effect = response_fn
+    return session
+
+
 def setup_function():
     reset()
+
+
+# --- is_configured / prepare ---
 
 
 def test_not_configured_returns_none():
@@ -90,183 +102,295 @@ def test_is_configured_false():
     assert is_configured(MOCK_CONFIG_NO_REMOTE) is False
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_successful_encoding(mock_post):
-    texts = ["hello world", "bonjour le monde"]
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(texts)
-    mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
+def test_prepare_not_configured():
+    assert prepare(MOCK_CONFIG_NO_REMOTE) is None
 
-    result = encode_batch(texts, MOCK_CONFIG)
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_prepare_openai_url(MockSession):
+    MockSession.return_value = MagicMock(headers={})
+    params = prepare(MOCK_CONFIG)
+    assert params["url"] == "http://gpu-server:3000/v1/embeddings"
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_prepare_ollama_url(MockSession):
+    MockSession.return_value = MagicMock(headers={})
+    params = prepare(MOCK_CONFIG_OLLAMA)
+    assert params["url"] == "http://gpu-server:11434/api/embed"
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_prepare_api_key_in_session_headers(MockSession):
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    MockSession.return_value = mock_session
+    params = prepare(MOCK_CONFIG_WITH_KEY)
+    assert params["session"].headers["Authorization"] == "Bearer sk-test-key-123"
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_prepare_no_api_key(MockSession):
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    MockSession.return_value = mock_session
+    params = prepare(MOCK_CONFIG)
+    assert "Authorization" not in params["session"].headers
+
+
+# --- encode_single ---
+
+
+def test_encode_single_success():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_response(2)
+    mock_resp.raise_for_status = MagicMock()
+
+    session = MagicMock()
+    session.post.return_value = mock_resp
+
+    params = {
+        "url": "http://test/v1/embeddings",
+        "model": "bge-m3",
+        "timeout": 300,
+        "parse_fn": lambda data, count: [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])],
+        "session": session,
+        "expected_dim": 1024,
+    }
+    result = encode_single(["hello", "world"], params)
+    assert result is not None
+    assert len(result) == 2
+    assert len(result[0]) == 1024
+
+
+def test_encode_single_timeout():
+    session = MagicMock()
+    session.post.side_effect = requests.exceptions.Timeout()
+
+    params = {
+        "url": "http://test/v1/embeddings",
+        "model": "bge-m3",
+        "timeout": 300,
+        "parse_fn": None,
+        "session": session,
+        "expected_dim": 1024,
+    }
+    assert encode_single(["hello"], params) is None
+
+
+def test_encode_single_connection_error():
+    session = MagicMock()
+    session.post.side_effect = requests.exceptions.ConnectionError()
+
+    params = {
+        "url": "http://test/v1/embeddings",
+        "model": "bge-m3",
+        "timeout": 300,
+        "parse_fn": None,
+        "session": session,
+        "expected_dim": 1024,
+    }
+    assert encode_single(["hello"], params) is None
+
+
+def test_encode_single_dimension_mismatch():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_response(1, dim=768)
+    mock_resp.raise_for_status = MagicMock()
+
+    from meshwiki.remote_embeddings import _parse_openai
+    session = MagicMock()
+    session.post.return_value = mock_resp
+
+    params = {
+        "url": "http://test/v1/embeddings",
+        "model": "bge-m3",
+        "timeout": 300,
+        "parse_fn": _parse_openai,
+        "session": session,
+        "expected_dim": 1024,
+    }
+    assert encode_single(["hello"], params) is None
+
+
+# --- encode_batch (integration through prepare + encode_single) ---
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_successful_encoding(MockSession):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_response(2)
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
+
+    result = encode_batch(["hello", "world"], MOCK_CONFIG)
 
     assert result is not None
     assert len(result) == 2
     assert len(result[0]) == 1024
-    mock_post.assert_called_once()
+    mock_session.post.assert_called_once()
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_dimension_mismatch_returns_none(mock_post):
-    texts = ["hello"]
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_dimension_mismatch_returns_none(MockSession):
     mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(texts, dim=768)
+    mock_resp.json.return_value = _make_response(1, dim=768)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
 
-    result = encode_batch(texts, MOCK_CONFIG)
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
-    assert result is None
-
-
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_timeout_returns_none(mock_post):
-    mock_post.side_effect = requests.exceptions.Timeout()
-
-    result = encode_batch(["hello"], MOCK_CONFIG)
-
-    assert result is None
+    assert encode_batch(["hello"], MOCK_CONFIG) is None
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_connection_error_returns_none(mock_post):
-    mock_post.side_effect = requests.exceptions.ConnectionError()
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_timeout_returns_none(MockSession):
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.side_effect = requests.exceptions.Timeout()
+    MockSession.return_value = mock_session
 
-    result = encode_batch(["hello"], MOCK_CONFIG)
-
-    assert result is None
+    assert encode_batch(["hello"], MOCK_CONFIG) is None
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_results_sorted_by_index(mock_post):
-    texts = ["a", "b", "c"]
-    # Return results in reversed order
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_connection_error_returns_none(MockSession):
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.side_effect = requests.exceptions.ConnectionError()
+    MockSession.return_value = mock_session
+
+    assert encode_batch(["hello"], MOCK_CONFIG) is None
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_http_error_returns_none(MockSession):
     mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(texts, shuffle=True)
+    mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
+
+    assert encode_batch(["hello"], MOCK_CONFIG) is None
+
+
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_results_sorted_by_index(MockSession):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_response(3, shuffle=True)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
 
-    result = encode_batch(texts, MOCK_CONFIG)
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
+    result = encode_batch(["a", "b", "c"], MOCK_CONFIG)
     assert result is not None
     assert len(result) == 3
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_sub_batching(mock_post):
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_sub_batching(MockSession):
     """600 texts with batch_size=256 should produce 3 HTTP calls."""
     texts = [f"text {i}" for i in range(600)]
 
     def side_effect(*args, **kwargs):
-        sub_batch = kwargs.get("json", args[1] if len(args) > 1 else {}).get("input", [])
+        sub_batch = kwargs.get("json", {}).get("input", [])
         resp = MagicMock()
-        resp.json.return_value = _make_response(sub_batch)
+        resp.json.return_value = _make_response(len(sub_batch))
         resp.raise_for_status = MagicMock()
         return resp
 
-    mock_post.side_effect = side_effect
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.side_effect = side_effect
+    MockSession.return_value = mock_session
 
     result = encode_batch(texts, MOCK_CONFIG)
 
     assert result is not None
     assert len(result) == 600
-    assert mock_post.call_count == 3  # 256 + 256 + 88
+    assert mock_session.post.call_count == 3  # 256 + 256 + 88
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_url_construction(mock_post):
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_url_construction(MockSession):
     mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(["test"])
+    mock_resp.json.return_value = _make_response(1)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
     encode_batch(["test"], MOCK_CONFIG)
 
-    call_args = mock_post.call_args
-    assert call_args[0][0] == "http://gpu-server:3000/v1/embeddings"
-
-
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_http_error_returns_none(mock_post):
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
-    mock_post.return_value = mock_resp
-
-    result = encode_batch(["hello"], MOCK_CONFIG)
-
-    assert result is None
-
-
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_api_key_sent_as_bearer_token(mock_post):
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(["test"])
-    mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
-
-    encode_batch(["test"], MOCK_CONFIG_WITH_KEY)
-
-    headers = mock_post.call_args[1]["headers"]
-    assert headers["Authorization"] == "Bearer sk-test-key-123"
-
-
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_no_api_key_sends_no_auth_header(mock_post):
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(["test"])
-    mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
-
-    encode_batch(["test"], MOCK_CONFIG)
-
-    headers = mock_post.call_args[1]["headers"]
-    assert "Authorization" not in headers
+    assert mock_session.post.call_args[0][0] == "http://gpu-server:3000/v1/embeddings"
 
 
 # --- Ollama API type tests ---
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_ollama_url_construction(mock_post):
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_ollama_url_construction(MockSession):
     mock_resp = MagicMock()
     mock_resp.json.return_value = _make_ollama_response(1)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
     encode_batch(["test"], MOCK_CONFIG_OLLAMA)
 
-    assert mock_post.call_args[0][0] == "http://gpu-server:11434/api/embed"
+    assert mock_session.post.call_args[0][0] == "http://gpu-server:11434/api/embed"
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_ollama_successful_encoding(mock_post):
-    texts = ["hello", "world", "test"]
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_ollama_successful_encoding(MockSession):
     mock_resp = MagicMock()
     mock_resp.json.return_value = _make_ollama_response(3)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
 
-    result = encode_batch(texts, MOCK_CONFIG_OLLAMA)
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
+
+    result = encode_batch(["a", "b", "c"], MOCK_CONFIG_OLLAMA)
 
     assert result is not None
     assert len(result) == 3
     assert len(result[0]) == 1024
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_ollama_dimension_mismatch_returns_none(mock_post):
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_ollama_dimension_mismatch_returns_none(MockSession):
     mock_resp = MagicMock()
     mock_resp.json.return_value = _make_ollama_response(1, dim=768)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
 
-    result = encode_batch(["hello"], MOCK_CONFIG_OLLAMA)
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
-    assert result is None
+    assert encode_batch(["hello"], MOCK_CONFIG_OLLAMA) is None
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_ollama_sub_batching(mock_post):
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_ollama_sub_batching(MockSession):
     """600 texts with batch_size=256 should produce 3 HTTP calls (Ollama)."""
     texts = [f"text {i}" for i in range(600)]
 
@@ -277,23 +401,29 @@ def test_ollama_sub_batching(mock_post):
         resp.raise_for_status = MagicMock()
         return resp
 
-    mock_post.side_effect = side_effect
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.side_effect = side_effect
+    MockSession.return_value = mock_session
 
     result = encode_batch(texts, MOCK_CONFIG_OLLAMA)
 
     assert result is not None
     assert len(result) == 600
-    assert mock_post.call_count == 3
+    assert mock_session.post.call_count == 3
 
 
-@patch("meshwiki.remote_embeddings.requests.post")
-def test_default_api_type_is_openai(mock_post):
-    """Config without api_type defaults to OpenAI endpoint."""
+@patch("meshwiki.remote_embeddings.requests.Session")
+def test_default_api_type_is_openai(MockSession):
     mock_resp = MagicMock()
-    mock_resp.json.return_value = _make_response(["test"])
+    mock_resp.json.return_value = _make_response(1)
     mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
+
+    mock_session = MagicMock()
+    mock_session.headers = {}
+    mock_session.post.return_value = mock_resp
+    MockSession.return_value = mock_session
 
     encode_batch(["test"], MOCK_CONFIG)
 
-    assert "/v1/embeddings" in mock_post.call_args[0][0]
+    assert "/v1/embeddings" in mock_session.post.call_args[0][0]
