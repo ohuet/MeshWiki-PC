@@ -281,8 +281,12 @@ def main() -> None:
         # Update check only if --update is passed
         if _wants_update() or _wants_indexation():
             if _wants_indexation():
-                logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
-                _run_background_update(cfg)
+                answer = input("Un index existe déjà. Réindexer ? (o/N) ").strip().lower()
+                if answer not in ("o", "oui", "y", "yes"):
+                    logger.info("Réindexation annulée par l'utilisateur")
+                else:
+                    logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
+                    _run_background_update(cfg)
             else:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
                 _run_background_download(cfg)
