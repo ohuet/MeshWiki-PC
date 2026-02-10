@@ -1,7 +1,8 @@
-"""Fixed two-line terminal progress display with ANSI escape codes.
+"""Fixed three-line terminal progress display with ANSI escape codes.
 
-Displays two fixed lines at the bottom of the terminal:
+Displays three fixed lines at the bottom of the terminal:
 - Info line: current action (e.g. "── Encodage et insertion de 5000 chunks...")
+- Sub-progress line: encoding detail (e.g. "  Distant 8/20 [████░░] | Local 3/20 [██░░]")
 - Progress line: bar with percentage, article count, and ETA
 
 Log messages scroll above the fixed lines. Falls back to normal logging
@@ -14,14 +15,22 @@ import threading
 
 
 BAR_WIDTH = 20
+_NUM_FIXED = 3
+
+
+def format_bar(percent: float, width: int = BAR_WIDTH) -> str:
+    """Format a progress bar string: [████░░░░] without brackets."""
+    filled = int(width * percent / 100)
+    return "\u2588" * filled + "\u2591" * (width - filled)
 
 
 class ProgressDisplay:
-    """Maintain two fixed lines at the bottom of the terminal."""
+    """Maintain three fixed lines at the bottom of the terminal."""
 
     def __init__(self):
         self._progress_line = ""
         self._info_line = ""
+        self._sub_progress_line = ""
         self._active = False
         self._is_tty = sys.stderr.isatty()
         self._lock = threading.Lock()
@@ -34,6 +43,7 @@ class ProgressDisplay:
 
         with self._lock:
             self._active = True
+            self._sub_progress_line = ""
 
             root = logging.getLogger()
             self._original_handlers = list(root.handlers)
@@ -49,8 +59,8 @@ class ProgressDisplay:
                     if getattr(h, 'stream', None) is not sys.stderr]
             root.handlers = [handler] + kept
 
-            # Reserve two lines
-            sys.stderr.write("\n\n")
+            # Reserve three lines
+            sys.stderr.write("\n" * _NUM_FIXED)
             sys.stderr.flush()
 
     def stop(self):
@@ -63,8 +73,13 @@ class ProgressDisplay:
                 return
             self._active = False
 
-            # Erase the two fixed lines
-            sys.stderr.write("\033[2A\033[K\033[B\033[K\033[A")
+            # Erase the three fixed lines
+            erase = ""
+            for i in range(_NUM_FIXED):
+                if i > 0:
+                    erase += "\033[A"
+                erase += "\033[K"
+            sys.stderr.write(f"\033[{_NUM_FIXED}A" + erase)
             sys.stderr.flush()
 
             root = logging.getLogger()
@@ -79,8 +94,7 @@ class ProgressDisplay:
 
     def set_progress(self, percent: float, articles: int, eta_dur: str, eta_time: str):
         """Update the progress bar (bottom line)."""
-        filled = int(BAR_WIDTH * percent / 100)
-        bar = "\u2588" * filled + "\u2591" * (BAR_WIDTH - filled)
+        bar = format_bar(percent)
         self._progress_line = (
             f"[{bar}] {percent:.1f}% \u2014 {articles} articles "
             f"\u2014 reste {eta_dur} (fin ~{eta_time})"
@@ -89,23 +103,31 @@ class ProgressDisplay:
             self._redraw()
 
     def set_info(self, message: str):
-        """Update the info line (above the progress bar)."""
+        """Update the info line (top fixed line)."""
         self._info_line = f"\u2500\u2500 {message}"
         if self._active:
             self._redraw()
 
+    def set_sub_progress(self, message: str):
+        """Update the sub-progress line (middle fixed line)."""
+        self._sub_progress_line = message
+        if self._active:
+            self._redraw()
+
+    def _fixed_lines(self) -> str:
+        """Return the three fixed lines as a single string for writing."""
+        return (
+            "\033[K" + self._info_line + "\n"
+            "\033[K" + self._sub_progress_line + "\n"
+            "\033[K" + self._progress_line + "\n"
+        )
+
     def _redraw(self):
-        """Redraw the two fixed lines using ANSI escape codes."""
+        """Redraw the three fixed lines using ANSI escape codes."""
         with self._lock:
             if not self._active:
                 return
-            sys.stderr.write(
-                "\033[2A"        # move up 2 lines
-                "\033[K"         # clear info line
-                + self._info_line + "\n"
-                "\033[K"         # clear progress line
-                + self._progress_line + "\n"
-            )
+            sys.stderr.write(f"\033[{_NUM_FIXED}A" + self._fixed_lines())
             sys.stderr.flush()
 
 
@@ -124,15 +146,12 @@ class _StatusHandler(logging.StreamHandler):
 
             try:
                 msg = self.format(record)
-                # Move up 2 lines, clear, write log message, then redraw fixed lines
+                # Move up N lines, clear, write log message, then redraw fixed lines
                 sys.stderr.write(
-                    "\033[2A"    # move up 2 lines
-                    "\033[K"     # clear line
+                    f"\033[{_NUM_FIXED}A"
+                    "\033[K"
                     + msg + "\n"
-                    "\033[K"     # clear info line
-                    + self._display._info_line + "\n"
-                    "\033[K"     # clear progress line
-                    + self._display._progress_line + "\n"
+                    + self._display._fixed_lines()
                 )
                 sys.stderr.flush()
             except Exception:

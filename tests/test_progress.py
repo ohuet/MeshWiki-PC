@@ -4,7 +4,7 @@ import logging
 import io
 from unittest.mock import patch, MagicMock
 
-from meshwiki.progress import ProgressDisplay, BAR_WIDTH
+from meshwiki.progress import ProgressDisplay, BAR_WIDTH, format_bar
 
 
 def test_non_tty_start_stop():
@@ -83,8 +83,8 @@ def test_handler_integration():
         test_logger.info("A log message during progress")
 
         output = stderr.getvalue()
-        # ANSI escape sequences should be present
-        assert "\033[2A" in output
+        # ANSI escape sequences should be present (3 fixed lines)
+        assert "\033[3A" in output
         assert "\033[K" in output
         # The log message should appear
         assert "A log message during progress" in output
@@ -120,6 +120,23 @@ def test_stop_without_start():
         mock_sys.stderr.isatty = lambda: True
         display = ProgressDisplay()
         display.stop()  # Should not raise
+
+
+def test_set_sub_progress():
+    """Sub-progress line is stored and included in redraws."""
+    display = ProgressDisplay()
+    display.set_sub_progress("  Distant 3/10 [███░░░░░░░]")
+    assert "Distant 3/10" in display._sub_progress_line
+
+
+def test_format_bar():
+    """format_bar produces correct filled/empty characters."""
+    bar_0 = format_bar(0.0, 10)
+    assert bar_0 == "\u2591" * 10
+    bar_50 = format_bar(50.0, 10)
+    assert bar_50 == "\u2588" * 5 + "\u2591" * 5
+    bar_100 = format_bar(100.0, 10)
+    assert bar_100 == "\u2588" * 10
 
 
 def test_file_handler_preserved_during_display():
