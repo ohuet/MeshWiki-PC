@@ -21,6 +21,9 @@ data/
 # pytest
 .pytest_cache/
 
+# Local config (secrets, API keys)
+config.local.yaml
+
 # OS
 Thumbs.db
 .DS_Store

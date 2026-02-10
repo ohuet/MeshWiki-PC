@@ -7,9 +7,9 @@ from pathlib import Path
 
 import chromadb
 import requests
-import yaml
 from bs4 import BeautifulSoup
 
+from meshwiki import config
 from meshwiki.wikipedia_indexer import index_zim
 from meshwiki.rag import reset_collection
 from meshwiki import kiwix_search
@@ -20,11 +20,6 @@ LAST_UPDATE_FILE = Path("data/last_update.json")
 ACTIVE_COLLECTION = "wikipedia"
 TEMP_COLLECTION = "wikipedia_new"
 BACKUP_COLLECTION = "wikipedia_old"
-
-
-def _load_config() -> dict:
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
 
 
 def _delete_collection_safe(client, name: str) -> None:
@@ -71,7 +66,7 @@ class WikipediaUpdater:
     """Handles Wikipedia dump download, indexation, and safe collection swap."""
 
     def __init__(self):
-        self.config = _load_config()
+        self.config = config.load_config()
         self.updater_config = self.config["updater"]
 
     def get_latest_dump_url(self) -> tuple[str, str] | None:
@@ -184,8 +179,8 @@ class WikipediaUpdater:
 
         Returns True on success, False on failure.
         """
-        config = _load_config()
-        vectordb_path = config["vectordb"]["path"]
+        cfg = config.load_config()
+        vectordb_path = cfg["vectordb"]["path"]
         client = chromadb.PersistentClient(path=vectordb_path)
 
         kiwix_search.set_zim_path(zim_path)

@@ -47,7 +47,7 @@ def _make_packet(text, from_node=OTHER_NODE_NUM, to_node=MY_NODE_NUM):
     }
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_ignores_own_messages(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -60,7 +60,7 @@ def test_ignores_own_messages(mock_config):
     bridge.interface.sendText.assert_not_called()
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_ignores_broadcast_without_prefix(mock_config):
     """Broadcast messages without trigger prefix are ignored."""
     limiter = RateLimiter()
@@ -74,7 +74,7 @@ def test_ignores_broadcast_without_prefix(mock_config):
     bridge.interface.sendText.assert_not_called()
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.rag")
 def test_broadcast_with_prefix_is_processed(mock_rag, mock_config):
     """Broadcast messages with trigger prefix are processed."""
@@ -94,7 +94,7 @@ def test_broadcast_with_prefix_is_processed(mock_rag, mock_config):
     )
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.rag")
 def test_direct_message_no_prefix(mock_rag, mock_config):
     """Direct messages are processed without requiring a prefix."""
@@ -114,7 +114,7 @@ def test_direct_message_no_prefix(mock_rag, mock_config):
     )
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.rag")
 def test_direct_message_with_prefix_strips_it(mock_rag, mock_config):
     """Direct messages with prefix still work — prefix is stripped."""
@@ -131,7 +131,7 @@ def test_direct_message_with_prefix_strips_it(mock_rag, mock_config):
     mock_rag.query.assert_called_once_with("Capitale de la France")
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.rag")
 def test_rate_limiting_sends_denial(mock_rag, mock_config):
     mock_rag.is_available.return_value = True
@@ -157,7 +157,7 @@ def test_rate_limiting_sends_denial(mock_rag, mock_config):
     assert "Limite atteinte" in sent_text
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_send_response_chunks_with_delay(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -178,7 +178,7 @@ def test_send_response_chunks_with_delay(mock_config):
     assert elapsed > 0
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_send_response_short_text_no_chunking(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -189,7 +189,7 @@ def test_send_response_short_text_no_chunking(mock_config):
     bridge.interface.sendText.assert_called_once_with("Short answer", destinationId="!dest")
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_ignores_empty_question(mock_config):
     limiter = RateLimiter()
     bridge = MeshtasticBridge(limiter)
@@ -207,7 +207,7 @@ def test_ignores_empty_question(mock_config):
     bridge.interface.sendText.assert_not_called()
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG_NO_PORT)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG_NO_PORT)
 def test_auto_detect_serial_port(mock_config):
     """When port is not set, auto-detect the first Meshtastic serial port."""
     limiter = RateLimiter()
@@ -224,7 +224,7 @@ def test_auto_detect_serial_port(mock_config):
     assert bridge.interface == mock_iface
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG_NO_PORT)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG_NO_PORT)
 def test_auto_detect_no_port_found_raises(mock_config):
     """When no Meshtastic port is found, raise ConnectionError."""
     limiter = RateLimiter()
@@ -235,7 +235,7 @@ def test_auto_detect_no_port_found_raises(mock_config):
             bridge.connect()
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta")
@@ -265,7 +265,7 @@ def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_kiwix,
     )
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta")
@@ -295,7 +295,7 @@ def test_indexing_with_zim_uses_kiwix_fallback(mock_eta, mock_rag, mock_kiwix, m
     )
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
 @patch("meshwiki.meshtastic_bridge.rag")
 def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
@@ -314,7 +314,7 @@ def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
     mock_rag.query.assert_called_once_with("Capitale de la France")
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)
@@ -340,7 +340,7 @@ def test_no_index_with_kiwix_uses_fallback(mock_eta, mock_rag, mock_kiwix, mock_
     )
 
 
-@patch.object(bridge_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.meshtastic_bridge.kiwix_search")
 @patch("meshwiki.meshtastic_bridge.rag")
 @patch("meshwiki.meshtastic_bridge.get_indexing_eta", return_value=None)

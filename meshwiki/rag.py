@@ -4,10 +4,10 @@ import logging
 from pathlib import Path
 
 import chromadb
-import yaml
 from sentence_transformers import SentenceTransformer
 
 from meshwiki import kiwix_search, llm
+from meshwiki import config
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +55,11 @@ _collection = None
 _force_unavailable = False
 
 
-def _load_config() -> dict:
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
-
-
 def _get_model():
     global _model
     if _model is None:
-        config = _load_config()
-        embeddings_config = config["embeddings"]
+        cfg = config.load_config()
+        embeddings_config = cfg["embeddings"]
         model_name = embeddings_config["model"]
         truncate_dim = embeddings_config.get("truncate_dim")
         model_kwargs = {"torch_dtype": "float16"}
@@ -85,8 +80,8 @@ def _get_model():
 def _get_collection():
     global _collection
     if _collection is None:
-        config = _load_config()
-        client = chromadb.PersistentClient(path=config["vectordb"]["path"])
+        cfg = config.load_config()
+        client = chromadb.PersistentClient(path=cfg["vectordb"]["path"])
         _collection = client.get_collection("wikipedia")
     return _collection
 
@@ -213,15 +208,15 @@ def is_available() -> bool:
     if _force_unavailable:
         return False
     try:
-        config = _load_config()
-        db_path = Path(config["vectordb"]["path"])
+        cfg = config.load_config()
+        db_path = Path(cfg["vectordb"]["path"])
         if not db_path.exists():
             return False
         client = chromadb.PersistentClient(path=str(db_path))
         collection = client.get_collection("wikipedia")
         if collection.count() == 0:
             return False
-        expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
+        expected_dim = cfg["embeddings"].get("truncate_dim") or cfg["embeddings"].get("embedding_dim")
         if expected_dim:
             sample = collection.peek(limit=1)
             if sample["embeddings"]:

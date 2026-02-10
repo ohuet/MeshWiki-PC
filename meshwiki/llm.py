@@ -3,19 +3,10 @@
 import logging
 
 import requests
-import yaml
+
+from meshwiki import config
 
 logger = logging.getLogger(__name__)
-
-_config = None
-
-
-def _load_config() -> dict:
-    global _config
-    if _config is None:
-        with open("config.yaml") as f:
-            _config = yaml.safe_load(f)
-    return _config
 
 
 def generate(system_prompt: str, user_prompt: str) -> str:
@@ -23,8 +14,8 @@ def generate(system_prompt: str, user_prompt: str) -> str:
 
     Returns a French error message if Ollama is unavailable.
     """
-    config = _load_config()
-    ollama = config["ollama"]
+    cfg = config.load_config()
+    ollama = cfg["ollama"]
 
     url = f"{ollama['base_url']}/api/generate"
     payload = {

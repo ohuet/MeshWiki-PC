@@ -29,7 +29,7 @@ KIWIX_HTML = """
 """
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_get_latest_dump_url_finds_match(mock_get, mock_config):
     mock_response = MagicMock()
@@ -46,7 +46,7 @@ def test_get_latest_dump_url_finds_match(mock_get, mock_config):
     assert "wikipedia_fr_all_mini_2025-01.zim" in url
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_get_latest_dump_url_no_match(mock_get, mock_config):
     mock_response = MagicMock()
@@ -60,7 +60,7 @@ def test_get_latest_dump_url_no_match(mock_get, mock_config):
     assert result is None
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_get_latest_dump_url_network_error(mock_get, mock_config):
     import requests
@@ -72,7 +72,7 @@ def test_get_latest_dump_url_network_error(mock_get, mock_config):
     assert result is None
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 def test_download_dump_skips_if_up_to_date(mock_file, mock_config):
     mock_file.exists.return_value = True
@@ -87,7 +87,7 @@ def test_download_dump_skips_if_up_to_date(mock_file, mock_config):
     assert result is None
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_download_dump_returns_none_when_no_url(mock_config):
     updater = WikipediaUpdater()
 
@@ -97,7 +97,7 @@ def test_download_dump_returns_none_when_no_url(mock_config):
     assert result is None
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_download_skips_if_zim_already_exists(mock_get, mock_file, mock_config, tmp_path):
@@ -118,7 +118,7 @@ def test_download_skips_if_zim_already_exists(mock_get, mock_file, mock_config, 
     mock_get.assert_not_called()  # No HTTP request made
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.reset_collection")
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.chromadb")
@@ -145,7 +145,7 @@ def test_reindex_success(mock_chromadb, mock_index_zim, mock_reset, mock_config)
     mock_reset.assert_called_once()
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.chromadb")
 def test_reindex_failure_preserves_old_index(mock_chromadb, mock_index_zim, mock_config):
@@ -162,7 +162,7 @@ def test_reindex_failure_preserves_old_index(mock_chromadb, mock_index_zim, mock
     mock_client.delete_collection.assert_not_called()
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_cleanup_keeps_zim_file(mock_config, tmp_path):
     """cleanup() must NOT delete .zim files (kept as Kiwix fallback)."""
     zim_file = tmp_path / "test.zim"
@@ -175,7 +175,7 @@ def test_cleanup_keeps_zim_file(mock_config, tmp_path):
     assert zim_file.exists()
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 def test_cleanup_removes_temp_files_but_not_zim(mock_config, tmp_path):
     temp_dir = tmp_path / "tmp"
     temp_dir.mkdir()
@@ -192,7 +192,7 @@ def test_cleanup_removes_temp_files_but_not_zim(mock_config, tmp_path):
     assert "partial.zim.download" not in remaining
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_download_replaces_old_zim_only_after_completion(mock_get, mock_file, mock_config, tmp_path):
@@ -220,7 +220,7 @@ def test_download_replaces_old_zim_only_after_completion(mock_get, mock_file, mo
     assert not (tmp_path / "wiki_2025.zim.download").exists()
 
 
-@patch.object(updater_module, "_load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 @patch("meshwiki.wikipedia_updater.requests.get")
 def test_download_failure_does_not_create_partial_zim(mock_get, mock_file, mock_config, tmp_path):

@@ -13,9 +13,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import chromadb
-import yaml
 from lxml import html as lxml_html
 
+from meshwiki import config
 from meshwiki.progress import ProgressDisplay
 
 logger = logging.getLogger(__name__)
@@ -86,11 +86,6 @@ def _gpu_unlock_clocks() -> None:
         logger.info("GPU clocks unlocked")
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
-
-
-def _load_config() -> dict:
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
 
 
 def _clean_html(html: str) -> str:
@@ -245,16 +240,16 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
     from meshwiki import remote_embeddings
 
-    config = _load_config()
-    tz = ZoneInfo(config.get("meshtastic_timezone", "UTC"))
-    embeddings_config = config["embeddings"]
-    vectordb_path = config["vectordb"]["path"]
+    cfg = config.load_config()
+    tz = ZoneInfo(cfg.get("meshtastic_timezone", "UTC"))
+    embeddings_config = cfg["embeddings"]
+    vectordb_path = cfg["vectordb"]["path"]
 
     model_name = embeddings_config["model"]
     truncate_dim = embeddings_config.get("truncate_dim")
     model_kwargs = {"torch_dtype": "float16"}
 
-    remote_configured = remote_embeddings.is_configured(config)
+    remote_configured = remote_embeddings.is_configured(cfg)
     _local_model = None
 
     def _get_local_model():
@@ -444,7 +439,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             # Hybrid mode: work-stealing between remote and local GPU
             from concurrent.futures import ThreadPoolExecutor
             remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
-            remote_params = remote_embeddings.prepare(config)
+            remote_params = remote_embeddings.prepare(cfg)
 
             # Split into sub-batches
             sb_list = []
@@ -500,7 +495,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         elif remote_configured:
             # Remote-only mode (with fallback)
-            batch_embeddings = remote_embeddings.encode_batch(batch_docs, config)
+            batch_embeddings = remote_embeddings.encode_batch(batch_docs, cfg)
             if batch_embeddings is None:
                 logger.warning(
                     "FALLBACK LOCAL : échec encodage distant, utilisation modèle local (%d chunks)",

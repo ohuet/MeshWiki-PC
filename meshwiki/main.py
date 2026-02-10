@@ -14,9 +14,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
-import yaml
 
 from meshwiki import kiwix_search
+from meshwiki import config
 from meshwiki.meshtastic_bridge import MeshtasticBridge
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_updater import WikipediaUpdater, LAST_UPDATE_FILE
@@ -46,11 +46,6 @@ def _check_already_running() -> None:
     except OSError:
         logger.error("MeshWiki est déjà en cours d'exécution")
         sys.exit(1)
-
-
-def _load_config() -> dict:
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
 
 
 def _check_ollama(config: dict) -> bool:
@@ -226,18 +221,18 @@ def main() -> None:
 
     # Load configuration
     try:
-        config = _load_config()
+        cfg = config.load_config()
     except FileNotFoundError:
         logger.error("config.yaml introuvable")
         sys.exit(1)
 
     # Check Ollama
-    if not _check_ollama(config):
-        logger.warning("Ollama n'est pas accessible à %s", config["ollama"]["base_url"])
+    if not _check_ollama(cfg):
+        logger.warning("Ollama n'est pas accessible à %s", cfg["ollama"]["base_url"])
         logger.warning("Le service démarrera mais les réponses LLM ne fonctionneront pas.")
 
     # Initialize rate limiter
-    rl_config = config["rate_limiting"]
+    rl_config = cfg["rate_limiting"]
     rate_limiter = RateLimiter(
         max_requests=rl_config["max_requests"],
         window_seconds=rl_config["window_seconds"],
@@ -261,25 +256,25 @@ def main() -> None:
         logger.info("--nowiki : fichier ZIM désactivé")
 
     # Check/create index
-    if not noindex and _index_exists(config):
+    if not noindex and _index_exists(cfg):
         logger.info("Index ChromaDB disponible")
         # Update check only if --update is passed
         if _wants_update() or _wants_indexation():
             if _wants_indexation():
                 logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
-                _run_background_update(config)
+                _run_background_update(cfg)
             else:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
-                _run_background_download(config)
+                _run_background_download(cfg)
     else:
         if not nowiki:
-            zim_path = _find_existing_zim(config)
+            zim_path = _find_existing_zim(cfg)
             if zim_path:
                 kiwix_search.set_zim_path(zim_path)
                 logger.info("Recherche Kiwix activée comme fallback (%s)", zim_path.name)
             elif not offline:
                 logger.info("Aucun ZIM trouvé — téléchargement en arrière-plan...")
-                _run_background_download(config)
+                _run_background_download(cfg)
             else:
                 logger.info("Aucun index ni ZIM trouvé — mode offline, le LLM répondra seul.")
         else:
@@ -288,7 +283,7 @@ def main() -> None:
 
         if not noindex and _wants_indexation():
             logger.info("Indexation demandée, lancement en arrière-plan...")
-            _run_background_update(config)
+            _run_background_update(cfg)
         elif not noindex:
             logger.info("Lancez avec --index pour créer l'index ChromaDB")
 

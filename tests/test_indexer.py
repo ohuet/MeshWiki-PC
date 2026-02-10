@@ -94,7 +94,7 @@ def test_is_content_article_valid():
     assert _is_content_article(entry) is True
 
 
-@patch("meshwiki.wikipedia_indexer._load_config")
+@patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
 def test_index_zim_processes_articles(mock_chromadb, mock_config):
     """Integration-style test with mocked ZIM archive."""
@@ -172,7 +172,7 @@ def test_load_checkpoint_no_file(mock_cp_file):
     assert _load_checkpoint("wiki", Path("test.zim")) is None
 
 
-@patch("meshwiki.wikipedia_indexer._load_config")
+@patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
 @patch("meshwiki.wikipedia_indexer._load_checkpoint")
 @patch("meshwiki.wikipedia_indexer._save_checkpoint")
@@ -228,7 +228,7 @@ def test_index_zim_resumes_from_checkpoint(
     assert stats["chunk_count"] >= 7  # 6 from checkpoint + at least 1 new
 
 
-@patch("meshwiki.wikipedia_indexer._load_config")
+@patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
 @patch("meshwiki.wikipedia_indexer._load_checkpoint")
 @patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
@@ -354,7 +354,7 @@ def test_load_checkpoint_recovers_from_tmp(tmp_path):
     assert tmp_file.exists()
 
 
-@patch("meshwiki.wikipedia_indexer._load_config")
+@patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
 @patch("meshwiki.wikipedia_indexer._set_indexing_eta")
 def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config):

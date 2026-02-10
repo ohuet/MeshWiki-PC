@@ -5,10 +5,10 @@ import time
 import threading
 from datetime import datetime, timezone
 
-import yaml
 from pubsub import pub
 
 from meshwiki.chunker import split_message
+from meshwiki import config
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_indexer import get_indexing_eta
 from meshwiki import kiwix_search, rag
@@ -16,16 +16,11 @@ from meshwiki import kiwix_search, rag
 logger = logging.getLogger(__name__)
 
 
-def _load_config() -> dict:
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
-
-
 class MeshtasticBridge:
     """Connects to a Meshtastic radio and handles question/answer flow."""
 
     def __init__(self, rate_limiter: RateLimiter):
-        self.config = _load_config()
+        self.config = config.load_config()
         self.mesh_config = self.config["meshtastic"]
         self.rate_limiter = rate_limiter
         self.interface = None

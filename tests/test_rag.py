@@ -10,7 +10,7 @@ import meshwiki.rag as rag_module
 @patch("meshwiki.rag.llm")
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_query_success(mock_config, mock_chromadb, mock_st, mock_llm):
     mock_config.return_value = {
         "embeddings": {"model": "test-model"},
@@ -54,7 +54,7 @@ def test_query_success(mock_config, mock_chromadb, mock_st, mock_llm):
 @patch.object(rag_module, "_model", None)
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_query_no_results(mock_config, mock_chromadb, mock_st):
     mock_config.return_value = {
         "embeddings": {"model": "test-model"},
@@ -78,7 +78,7 @@ def test_query_no_results(mock_config, mock_chromadb, mock_st):
 
 @patch.object(rag_module, "_collection", None)
 @patch.object(rag_module, "_model", None)
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_query_db_unavailable(mock_config):
     mock_config.side_effect = Exception("DB not found")
 
@@ -92,7 +92,7 @@ def test_query_db_unavailable(mock_config):
 @patch("meshwiki.rag.llm")
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock_llm):
     mock_config.return_value = {
         "embeddings": {"model": "test-model"},
@@ -126,7 +126,7 @@ def test_query_prompt_contains_context(mock_config, mock_chromadb, mock_st, mock
 @patch.object(rag_module, "_model", None)
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_query_filters_distant_results(mock_config, mock_chromadb, mock_st):
     """Results with cosine distance > threshold are filtered out."""
     mock_config.return_value = {
@@ -223,7 +223,7 @@ def test_query_with_kiwix_context_fallback_no_results(mock_kiwix, mock_llm):
 
 
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_is_available_false_force_unavailable(mock_config, mock_chromadb):
     """is_available() returns False when set_force_unavailable(True) is active."""
     mock_config.return_value = {
@@ -247,7 +247,7 @@ def test_is_available_false_force_unavailable(mock_config, mock_chromadb):
 
 
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_is_available_true(mock_config, mock_chromadb):
     """is_available() returns True when the Wikipedia collection exists with correct dimensions."""
     mock_config.return_value = {
@@ -267,7 +267,7 @@ def test_is_available_true(mock_config, mock_chromadb):
 
 
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_is_available_false_no_collection(mock_config, mock_chromadb):
     """is_available() returns False when the collection doesn't exist."""
     mock_config.return_value = {
@@ -283,7 +283,7 @@ def test_is_available_false_no_collection(mock_config, mock_chromadb):
         assert rag_module.is_available() is False
 
 
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_is_available_false_no_db(mock_config):
     """is_available() returns False when the database path doesn't exist."""
     mock_config.return_value = {
@@ -297,7 +297,7 @@ def test_is_available_false_no_db(mock_config):
 
 
 @patch("meshwiki.rag.chromadb")
-@patch("meshwiki.rag._load_config")
+@patch("meshwiki.config.load_config")
 def test_is_available_false_wrong_dimension(mock_config, mock_chromadb):
     """is_available() returns False when embedding dimensions don't match."""
     mock_config.return_value = {

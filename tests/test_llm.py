@@ -18,9 +18,9 @@ MOCK_CONFIG = {
 }
 
 
-@patch.object(llm_module, "_config", MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.llm.requests.post")
-def test_successful_generation(mock_post):
+def test_successful_generation(mock_post, mock_config):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"response": "Paris est la capitale de la France."}
@@ -37,9 +37,9 @@ def test_successful_generation(mock_post):
     assert payload["stream"] is False
 
 
-@patch.object(llm_module, "_config", MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.llm.requests.post")
-def test_timeout_returns_french_error(mock_post):
+def test_timeout_returns_french_error(mock_post, mock_config):
     mock_post.side_effect = requests.exceptions.Timeout()
 
     result = generate("system", "user")
@@ -47,9 +47,9 @@ def test_timeout_returns_french_error(mock_post):
     assert "pas répondu à temps" in result
 
 
-@patch.object(llm_module, "_config", MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.llm.requests.post")
-def test_connection_error_returns_unavailable(mock_post):
+def test_connection_error_returns_unavailable(mock_post, mock_config):
     mock_post.side_effect = requests.exceptions.ConnectionError()
 
     result = generate("system", "user")
@@ -57,9 +57,9 @@ def test_connection_error_returns_unavailable(mock_post):
     assert "indisponible" in result
 
 
-@patch.object(llm_module, "_config", MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.llm.requests.post")
-def test_http_error_returns_generic_error(mock_post):
+def test_http_error_returns_generic_error(mock_post, mock_config):
     mock_response = MagicMock()
     mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
     mock_post.return_value = mock_response
@@ -69,9 +69,9 @@ def test_http_error_returns_generic_error(mock_post):
     assert "Erreur" in result
 
 
-@patch.object(llm_module, "_config", MOCK_CONFIG)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.llm.requests.post")
-def test_payload_structure(mock_post):
+def test_payload_structure(mock_post, mock_config):
     mock_response = MagicMock()
     mock_response.json.return_value = {"response": "ok"}
     mock_response.raise_for_status = MagicMock()
