@@ -42,6 +42,11 @@ ollama:
   temperature: 0.1
   max_tokens: 300
 
+logging:
+  file: "data/meshwiki.log"    # chemin du fichier de log (null pour désactiver)
+  max_size_mb: 5               # taille max avant rotation
+  backup_count: 3              # nombre de fichiers de rotation conservés
+
 updater:
   enabled: true
   interval_days: 30

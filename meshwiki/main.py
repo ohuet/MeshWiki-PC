@@ -6,6 +6,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import signal
 import sys
 import threading
@@ -225,6 +226,24 @@ def main() -> None:
     except FileNotFoundError:
         logger.error("config.yaml introuvable")
         sys.exit(1)
+
+    # File logging with rotation
+    log_cfg = cfg.get("logging", {})
+    log_file = log_cfg.get("file")
+    if log_file:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=log_cfg.get("max_size_mb", 5) * 1024 * 1024,
+            backupCount=log_cfg.get("backup_count", 3),
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        ))
+        logging.getLogger().addHandler(file_handler)
+        logger.info("Logs enregistrés dans %s", log_path)
 
     # Check Ollama
     if not _check_ollama(cfg):
