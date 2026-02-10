@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 
 import meshwiki.wikipedia_updater as updater_module
-from meshwiki.wikipedia_updater import WikipediaUpdater, _copy_collection
+from meshwiki.wikipedia_updater import WikipediaUpdater
 
 
 MOCK_CONFIG = {
@@ -121,45 +121,49 @@ def test_download_skips_if_zim_already_exists(mock_get, mock_file, mock_config, 
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.reset_collection")
 @patch("meshwiki.wikipedia_updater.index_zim")
-@patch("meshwiki.wikipedia_updater.chromadb")
-def test_reindex_success(mock_chromadb, mock_index_zim, mock_reset, mock_config):
+@patch("meshwiki.wikipedia_updater.collection_state")
+def test_reindex_success(mock_cs, mock_index_zim, mock_reset, mock_config):
     mock_index_zim.return_value = {"article_count": 100, "chunk_count": 500}
-    mock_client = MagicMock()
-    mock_collection = MagicMock()
-    mock_client.get_collection.return_value = mock_collection
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_cs.get_inactive_db_path.return_value = "./data/chroma_db_b"
+    mock_cs.get_inactive_slot.return_value = "b"
+    mock_cs.get_active_db_path.return_value = "./data/chroma_db_a"
 
     updater = WikipediaUpdater()
     zim_path = MagicMock(spec=Path)
     zim_path.name = "test.zim"
 
-    with patch("builtins.open", mock_open()):
+    with patch("builtins.open", mock_open()), \
+         patch("meshwiki.wikipedia_updater.threading") as mock_threading:
         result = updater.reindex(zim_path)
 
     assert result is True
-    mock_index_zim.assert_called_once_with(zim_path, collection_name="wikipedia_new")
-    # Temp collection is renamed to active (not copied)
-    mock_client.get_collection.assert_called_with("wikipedia_new")
-    mock_collection.modify.assert_called_once_with(name="wikipedia")
+    # Indexes into the inactive database
+    mock_index_zim.assert_called_once_with(zim_path, db_path="./data/chroma_db_b")
+    # Pointer is updated to new slot
+    mock_cs.set_active_slot.assert_called_once_with("b")
     # RAG cache is invalidated after swap
     mock_reset.assert_called_once()
+    # Old database is deleted in a background thread via rmtree
+    mock_threading.Thread.assert_called_once()
+    thread_kwargs = mock_threading.Thread.call_args[1]
+    assert thread_kwargs["args"] == ("./data/chroma_db_a",)
+    assert thread_kwargs["daemon"] is True
 
 
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.index_zim")
-@patch("meshwiki.wikipedia_updater.chromadb")
-def test_reindex_failure_preserves_old_index(mock_chromadb, mock_index_zim, mock_config):
+@patch("meshwiki.wikipedia_updater.collection_state")
+def test_reindex_failure_preserves_old_index(mock_cs, mock_index_zim, mock_config):
     mock_index_zim.side_effect = Exception("Indexation error")
-    mock_client = MagicMock()
-    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_cs.get_inactive_db_path.return_value = "./data/chroma_db_b"
+    mock_cs.get_inactive_slot.return_value = "b"
 
     updater = WikipediaUpdater()
     result = updater.reindex(MagicMock(spec=Path))
 
     assert result is False
-    # Temp collection is NOT deleted on failure (checkpoint + collection
-    # must stay in sync for safe resume after interruption)
-    mock_client.delete_collection.assert_not_called()
+    # Pointer is NOT updated on failure — old index stays active
+    mock_cs.set_active_slot.assert_not_called()
 
 
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
@@ -238,66 +242,3 @@ def test_download_failure_does_not_create_partial_zim(mock_get, mock_file, mock_
 
     assert result is None
     assert not (tmp_path / "wiki_2026.zim").exists()
-
-
-def test_copy_collection_copies_all_data():
-    """_copy_collection transfers all documents from source to dest in batches."""
-    mock_client = MagicMock()
-
-    # Source collection returns 2 batches then empty
-    mock_source = MagicMock()
-    mock_source.get.side_effect = [
-        {
-            "ids": ["id1", "id2"],
-            "embeddings": [[0.1, 0.2], [0.3, 0.4]],
-            "documents": ["doc1", "doc2"],
-            "metadatas": [{"title": "A"}, {"title": "B"}],
-        },
-        {
-            "ids": ["id3"],
-            "embeddings": [[0.5, 0.6]],
-            "documents": ["doc3"],
-            "metadatas": [{"title": "C"}],
-        },
-        {
-            "ids": [],
-            "embeddings": [],
-            "documents": [],
-            "metadatas": [],
-        },
-    ]
-    mock_dest = MagicMock()
-
-    mock_client.get_collection.return_value = mock_source
-    mock_client.get_or_create_collection.return_value = mock_dest
-
-    _copy_collection(mock_client, "source", "dest", batch_size=2)
-
-    assert mock_dest.add.call_count == 2
-    # First batch
-    first_call = mock_dest.add.call_args_list[0]
-    assert first_call[1]["ids"] == ["id1", "id2"]
-    # Second batch
-    second_call = mock_dest.add.call_args_list[1]
-    assert second_call[1]["ids"] == ["id3"]
-
-
-def test_copy_collection_handles_empty_source():
-    """_copy_collection does nothing when source is empty."""
-    mock_client = MagicMock()
-
-    mock_source = MagicMock()
-    mock_source.get.return_value = {
-        "ids": [],
-        "embeddings": [],
-        "documents": [],
-        "metadatas": [],
-    }
-    mock_dest = MagicMock()
-
-    mock_client.get_collection.return_value = mock_source
-    mock_client.get_or_create_collection.return_value = mock_dest
-
-    _copy_collection(mock_client, "source", "dest")
-
-    mock_dest.add.assert_not_called()

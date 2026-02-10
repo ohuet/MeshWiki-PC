@@ -17,7 +17,7 @@ from pathlib import Path
 import requests
 
 from meshwiki import kiwix_search
-from meshwiki import config
+from meshwiki import config, collection_state
 from meshwiki.meshtastic_bridge import MeshtasticBridge
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_updater import WikipediaUpdater, LAST_UPDATE_FILE
@@ -65,7 +65,7 @@ def _index_exists(config: dict) -> bool:
     Verifies that the collection exists, has documents, and uses
     embeddings compatible with the current model configuration.
     """
-    db_path = Path(config["vectordb"]["path"])
+    db_path = Path(collection_state.get_active_db_path())
     if not db_path.exists():
         return False
 

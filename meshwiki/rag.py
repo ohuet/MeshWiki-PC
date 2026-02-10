@@ -7,7 +7,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 from meshwiki import kiwix_search, llm
-from meshwiki import config
+from meshwiki import config, collection_state
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def _get_collection():
     global _collection
     if _collection is None:
         cfg = config.load_config()
-        client = chromadb.PersistentClient(path=cfg["vectordb"]["path"])
+        client = chromadb.PersistentClient(path=collection_state.get_active_db_path())
         _collection = client.get_collection("wikipedia")
     return _collection
 
@@ -209,7 +209,7 @@ def is_available() -> bool:
         return False
     try:
         cfg = config.load_config()
-        db_path = Path(cfg["vectordb"]["path"])
+        db_path = Path(collection_state.get_active_db_path())
         if not db_path.exists():
             return False
         client = chromadb.PersistentClient(path=str(db_path))

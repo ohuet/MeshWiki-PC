@@ -2,14 +2,15 @@
 
 import json
 import logging
+import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 
-import chromadb
 import requests
 from bs4 import BeautifulSoup
 
-from meshwiki import config
+from meshwiki import config, collection_state
 from meshwiki.wikipedia_indexer import index_zim
 from meshwiki.rag import reset_collection
 from meshwiki import kiwix_search
@@ -17,49 +18,17 @@ from meshwiki import kiwix_search
 logger = logging.getLogger(__name__)
 
 LAST_UPDATE_FILE = Path("data/last_update.json")
-ACTIVE_COLLECTION = "wikipedia"
-TEMP_COLLECTION = "wikipedia_new"
-BACKUP_COLLECTION = "wikipedia_old"
 
 
-def _delete_collection_safe(client, name: str) -> None:
-    """Delete a ChromaDB collection, ignoring errors if it doesn't exist."""
+def _rmtree_safe(path: str) -> None:
+    """Delete a directory tree, ignoring errors if it doesn't exist."""
     try:
-        client.delete_collection(name)
-    except (ValueError, chromadb.errors.NotFoundError):
+        shutil.rmtree(path)
+        logger.info("Ancien index supprimé : %s", path)
+    except FileNotFoundError:
         pass
-
-
-def _copy_collection(client, source_name: str, dest_name: str, batch_size: int = 5000) -> None:
-    """Copy all data from one ChromaDB collection to another.
-
-    Creates the destination collection and copies embeddings, documents,
-    and metadatas in batches. Much faster than re-encoding from scratch.
-    """
-    source = client.get_collection(source_name)
-    dest = client.get_or_create_collection(
-        name=dest_name,
-        metadata={"hnsw:space": "cosine"},
-    )
-
-    offset = 0
-    while True:
-        results = source.get(
-            limit=batch_size,
-            offset=offset,
-            include=["embeddings", "documents", "metadatas"],
-        )
-        ids = results["ids"]
-        if not ids:
-            break
-        dest.add(
-            ids=ids,
-            embeddings=results["embeddings"],
-            documents=results["documents"],
-            metadatas=results["metadatas"],
-        )
-        offset += len(ids)
-        logger.info("Copie de la collection : %d documents copiés", offset)
+    except OSError as e:
+        logger.warning("Impossible de supprimer %s : %s", path, e)
 
 
 class WikipediaUpdater:
@@ -171,37 +140,45 @@ class WikipediaUpdater:
         """Build a new index and safely swap it with the active one.
 
         Strategy:
-        1. Index into TEMP_COLLECTION ("wikipedia_new")
+        1. Index into a fresh ChromaDB database (alternating chroma_a / chroma_b)
         2. Validate article_count > 0
-        3. Delete ACTIVE_COLLECTION, copy TEMP → ACTIVE (no re-encoding)
-        4. Delete TEMP_COLLECTION
-        On failure: delete TEMP_COLLECTION, old index stays intact.
+        3. Write pointer file to switch active database (instant)
+        4. Delete old database directory in background (shutil.rmtree)
+        On failure: pointer untouched, old index stays intact.
 
         Returns True on success, False on failure.
         """
-        cfg = config.load_config()
-        vectordb_path = cfg["vectordb"]["path"]
-        client = chromadb.PersistentClient(path=vectordb_path)
+        target_db_path = collection_state.get_inactive_db_path()
+        target_slot = collection_state.get_inactive_slot()
 
         kiwix_search.set_zim_path(zim_path)
         try:
-            # Step 1: Index into temp collection to verify the ZIM is valid
-            logger.info("Indexing into temporary collection '%s'...", TEMP_COLLECTION)
-            stats = index_zim(zim_path, collection_name=TEMP_COLLECTION)
+            # Step 1: Index into a fresh database
+            logger.info("Indexing into database '%s'...", target_db_path)
+            stats = index_zim(zim_path, db_path=target_db_path)
 
             if stats["article_count"] == 0:
                 logger.error("Indexation produced 0 articles, aborting")
-                _delete_collection_safe(client, TEMP_COLLECTION)
+                _rmtree_safe(target_db_path)
                 return False
 
-            # Step 2: Replace active collection by renaming temp
-            logger.info("Temp index OK (%d articles). Replacing active index...", stats["article_count"])
-            _delete_collection_safe(client, ACTIVE_COLLECTION)
-            temp_col = client.get_collection(TEMP_COLLECTION)
-            temp_col.modify(name=ACTIVE_COLLECTION)
+            # Step 2: Instant swap — write pointer file
+            old_db_path = collection_state.get_active_db_path()
+            logger.info(
+                "Index OK (%d articles). Swapping: %s -> %s",
+                stats["article_count"], old_db_path, target_db_path,
+            )
+            collection_state.set_active_slot(target_slot)
 
-            # Invalidate RAG cache so it picks up the renamed collection
+            # Invalidate RAG cache so it picks up the new database
             reset_collection()
+
+            # Delete old database in background (instant rmtree)
+            threading.Thread(
+                target=_rmtree_safe,
+                args=(old_db_path,),
+                daemon=True,
+            ).start()
 
             # Update tracking file
             LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -217,11 +194,11 @@ class WikipediaUpdater:
             return True
 
         except Exception as e:
-            # Don't delete the temp collection here: on Windows, Python
+            # Don't delete the target database here: on Windows, Python
             # interpreter shutdown can raise exceptions in daemon threads
-            # (module globals set to None). Deleting the collection while
+            # (module globals set to None). Deleting the database while
             # the checkpoint file survives causes data loss on resume.
-            # The collection and checkpoint stay in sync for safe resume.
+            # The database and checkpoint stay in sync for safe resume.
             logger.error("Reindexation failed: %s", e)
             return False
         finally:

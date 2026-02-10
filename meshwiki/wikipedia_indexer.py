@@ -16,7 +16,7 @@ import chromadb
 from lxml import html as lxml_html
 
 from meshwiki import config
-from meshwiki.progress import ProgressDisplay
+from meshwiki.progress import ProgressDisplay, format_bar
 
 logger = logging.getLogger(__name__)
 
@@ -226,12 +226,15 @@ def _save_checkpoint(
         os.fsync(f.fileno())
 
 
-def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
+def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str | None = None) -> dict:
     """Read a ZIM file and index its content into ChromaDB.
 
     Uses a producer-consumer pipeline: the producer thread reads ZIM entries,
     cleans HTML and chunks text into batches; the main thread (consumer) encodes
     embeddings and inserts into ChromaDB. This overlaps I/O with encoding.
+
+    Args:
+        db_path: ChromaDB database directory. Defaults to config vectordb.path.
 
     Returns stats: {"article_count": int, "chunk_count": int}
     """
@@ -243,7 +246,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     cfg = config.load_config()
     tz = ZoneInfo(cfg.get("meshtastic_timezone", "UTC"))
     embeddings_config = cfg["embeddings"]
-    vectordb_path = cfg["vectordb"]["path"]
+    vectordb_path = db_path or cfg["vectordb"]["path"]
 
     model_name = embeddings_config["model"]
     truncate_dim = embeddings_config.get("truncate_dim")
@@ -483,18 +486,26 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             local_model = _get_local_model()
             local_lock = threading.Lock()
 
-            sb_done = 0
-            sb_done_lock = threading.Lock()
             total_sb = len(sb_list)
+            remote_done = 0
+            local_done = 0
+            sb_done_lock = threading.Lock()
+            SUB_BAR_W = 10
 
-            def _update_hybrid_progress():
-                nonlocal sb_done
+            def _update_hybrid_progress(worker_type: str):
+                nonlocal remote_done, local_done
                 with sb_done_lock:
-                    sb_done += 1
-                    done = sb_done
-                progress.set_info(
-                    "Encodage hybride : %d/%d sous-lots (%d/%d chunks)"
-                    % (done, total_sb, done * remote_batch_size, len(batch_docs))
+                    if worker_type == "remote":
+                        remote_done += 1
+                    else:
+                        local_done += 1
+                    r, l = remote_done, local_done
+                r_pct = r / total_sb * 100 if total_sb else 0
+                l_pct = l / total_sb * 100 if total_sb else 0
+                progress.set_sub_progress(
+                    "  Distant %d/%d [%s] | Local %d/%d [%s]"
+                    % (r, total_sb, format_bar(r_pct, SUB_BAR_W),
+                       l, total_sb, format_bar(l_pct, SUB_BAR_W))
                 )
 
             def _remote_worker():
@@ -514,7 +525,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                                 docs, batch_size=64, show_progress_bar=False,
                             ).tolist()
                     sb_results[idx] = embs
-                    _update_hybrid_progress()
+                    _update_hybrid_progress("remote")
 
             def _local_worker():
                 while True:
@@ -527,7 +538,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
                             docs, batch_size=64, show_progress_bar=False,
                         ).tolist()
                     sb_results[idx] = embs
-                    _update_hybrid_progress()
+                    _update_hybrid_progress("local")
 
             with ThreadPoolExecutor(max_workers=max_concurrent + local_workers) as pool:
                 futs = []
@@ -544,11 +555,12 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
 
         elif remote_configured:
             # Remote-only mode (with fallback)
+            SUB_BAR_W = 10
+
             def _on_remote_sub_batch(done: int, total: int):
-                remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
-                progress.set_info(
-                    "Encodage distant : %d/%d sous-lots (%d/%d chunks)"
-                    % (done, total, done * remote_batch_size, len(batch_docs))
+                pct = done / total * 100 if total else 0
+                progress.set_sub_progress(
+                    "  Distant %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
                 )
 
             batch_embeddings = remote_embeddings.encode_batch(
@@ -570,6 +582,8 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             batch_embeddings = local_model.encode(
                 batch_docs, batch_size=64, show_progress_bar=False,
             ).tolist()
+
+        progress.set_sub_progress("")
 
         write_queue.put((
             batch_ids, batch_docs, batch_embeddings, batch_metadatas,
