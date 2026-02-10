@@ -301,8 +301,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     # Start update scheduler (disabled in offline mode)
-    if config["updater"]["enabled"] and not _wants_offline():
-        stop_event = _start_update_scheduler(config)
+    if cfg["updater"]["enabled"] and not _wants_offline():
+        stop_event = _start_update_scheduler(cfg)
 
     # Connect and run
     logger.info("MeshWiki opérationnel. En attente de messages...")

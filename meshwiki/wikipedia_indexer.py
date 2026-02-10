@@ -426,14 +426,43 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
     producer_thread = threading.Thread(target=_producer, daemon=True)
     producer_thread.start()
 
-    # --- Consumer (main thread): encodes + inserts into ChromaDB ---
+    # --- Writer thread: inserts into ChromaDB while consumer encodes next batch ---
+    write_queue: queue.Queue = queue.Queue(maxsize=2)
+    writer_error: list[Exception] = []
+
+    def _writer():
+        while True:
+            item = write_queue.get()
+            if item is None:
+                break
+            w_ids, w_docs, w_embeddings, w_metadatas, w_entry_idx, w_art, w_chunk = item
+            try:
+                collection.add(
+                    ids=w_ids,
+                    documents=w_docs,
+                    embeddings=w_embeddings,
+                    metadatas=w_metadatas,
+                )
+                _save_checkpoint(collection_name, zim_path, w_entry_idx, w_art, w_chunk)
+            except Exception as e:
+                logger.error("Writer error: %s", e)
+                writer_error.append(e)
+                break
+
+    writer_thread = threading.Thread(target=_writer, daemon=True)
+    writer_thread.start()
+
+    # --- Consumer (main thread): encodes embeddings, sends to writer ---
     while True:
         batch = batch_queue.get()
         if batch is None:
             break
 
+        if writer_error:
+            break
+
         batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
-        progress.set_info("Encodage et insertion de %d chunks dans ChromaDB..." % len(batch_ids))
+        progress.set_info("Encodage de %d chunks..." % len(batch_ids))
 
         if remote_configured and local_workers > 0:
             # Hybrid mode: work-stealing between remote and local GPU
@@ -512,17 +541,27 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
             batch_embeddings = local_model.encode(
                 batch_docs, batch_size=64,
             ).tolist()
-        collection.add(
-            ids=batch_ids,
-            documents=batch_docs,
-            embeddings=batch_embeddings,
-            metadatas=batch_metadatas,
-        )
-        _save_checkpoint(collection_name, zim_path, last_entry_idx, article_count, chunk_count)
+
+        write_queue.put((
+            batch_ids, batch_docs, batch_embeddings, batch_metadatas,
+            last_entry_idx, article_count, chunk_count,
+        ))
+
+    # Signal writer to stop and wait for it
+    write_queue.put(None)
+    writer_thread.join()
 
     producer_thread.join()
 
-    # Check if producer completed normally or was interrupted
+    # Check if writer or producer failed
+    if writer_error:
+        progress.stop()
+        if gpu_locked:
+            _gpu_unlock_clocks()
+        _set_indexing_eta(None)
+        logger.error("Indexation échouée — erreur d'écriture ChromaDB")
+        raise writer_error[0]
+
     if not producer_completed.is_set():
         progress.stop()
         if gpu_locked:

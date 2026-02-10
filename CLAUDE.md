@@ -29,6 +29,13 @@ pytest tests/test_chunker.py::test_function_name -v
 
 **External requirements**: Ollama must be running locally (`http://localhost:11434`) with a model pulled (e.g., `ollama pull mistral`). A Meshtastic module must be connected via USB serial or BLE.
 
+### Android
+
+```bash
+# Build debug APK
+cd "D:\Perso\SideProjects\MeshWiki Android" && cmd //c ".\\gradlew.bat assembleDebug" 2>&1
+```
+
 ## Architecture
 
 ```
