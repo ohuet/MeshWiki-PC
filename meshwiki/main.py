@@ -79,7 +79,7 @@ def _index_exists(config: dict) -> bool:
         expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
         if expected_dim:
             sample = collection.peek(limit=1)
-            if sample["embeddings"]:
+            if len(sample["embeddings"]) > 0:
                 actual_dim = len(sample["embeddings"][0])
                 if actual_dim != expected_dim:
                     logger.warning(
@@ -88,7 +88,8 @@ def _index_exists(config: dict) -> bool:
                     )
                     return False
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Vérification de l'index échouée (%s): %s", db_path, e)
         return False
 
 

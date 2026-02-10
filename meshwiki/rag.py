@@ -219,12 +219,13 @@ def is_available() -> bool:
         expected_dim = cfg["embeddings"].get("truncate_dim") or cfg["embeddings"].get("embedding_dim")
         if expected_dim:
             sample = collection.peek(limit=1)
-            if sample["embeddings"]:
+            if len(sample["embeddings"]) > 0:
                 actual_dim = len(sample["embeddings"][0])
                 if actual_dim != expected_dim:
                     return False
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Index check failed: %s", e)
         return False
 
 
