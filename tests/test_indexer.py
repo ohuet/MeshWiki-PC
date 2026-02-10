@@ -231,11 +231,10 @@ def test_index_zim_resumes_from_checkpoint(
 @patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
 @patch("meshwiki.wikipedia_indexer._load_checkpoint")
-@patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
-def test_index_zim_deletes_checkpoint_on_completion(
-    mock_cp_file, mock_load_cp, mock_chromadb, mock_config
+def test_index_zim_archives_checkpoint_on_completion(
+    mock_load_cp, mock_chromadb, mock_config, tmp_path
 ):
-    """Checkpoint file is deleted when indexation completes."""
+    """Checkpoint file is renamed (archived) when indexation completes."""
     mock_config.return_value = {
         "embeddings": {"model": "test-model", "chunk_size": 50, "chunk_overlap": 10},
         "vectordb": {"path": "./test_db"},
@@ -255,14 +254,26 @@ def test_index_zim_deletes_checkpoint_on_completion(
     mock_archive = MagicMock()
     mock_archive.entry_count = 0  # No entries to process
 
-    mock_cp_file.exists.return_value = True
+    # Use real files instead of mocking CHECKPOINT_FILE
+    cp_json = tmp_path / "indexing_checkpoint.json"
+    cp_tmp = tmp_path / "indexing_checkpoint.tmp"
+    cp_json.write_text("{}", encoding="utf-8")
+    cp_tmp.write_text("{}", encoding="utf-8")
 
     with patch("libzim.reader.Archive", return_value=mock_archive), \
-         patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model), \
+         patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE", cp_json):
         from meshwiki.wikipedia_indexer import index_zim
         index_zim(Path("test.zim"), "test_col")
 
-    mock_cp_file.unlink.assert_called_once()
+    # Original files should be gone (renamed)
+    assert not cp_json.exists()
+    assert not cp_tmp.exists()
+    # Archived files should exist with timestamp pattern
+    archived = list(tmp_path.glob("indexing_checkpoint_done_at_*"))
+    assert len(archived) == 2
+    suffixes = sorted(f.suffix for f in archived)
+    assert suffixes == [".json", ".tmp"]
 
 
 def test_get_indexing_eta_default_is_none():

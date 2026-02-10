@@ -570,10 +570,14 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia") -> dict:
         logger.warning("Indexation interrompue — checkpoint conservé pour reprise")
         raise RuntimeError("Indexation interrupted")
 
-    # Indexation complete — remove checkpoint files
+    # Indexation complete — archive checkpoint files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
         if cp.exists():
-            cp.unlink()
+            done_name = f"indexing_checkpoint_done_at_{timestamp}{cp.suffix}"
+            dest = cp.parent / done_name
+            cp.rename(dest)
+            logger.info("Checkpoint archivé : %s → %s", cp.name, done_name)
 
     progress.stop()
     if gpu_locked:
