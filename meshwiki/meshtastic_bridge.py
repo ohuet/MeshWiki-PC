@@ -92,7 +92,16 @@ class MeshtasticBridge:
         if not question:
             return
 
-        logger.info("Question from %s: %s", sender, question)
+        # Determine reply target: channel or direct message
+        if is_direct:
+            reply_target = {"destinationId": sender}
+            target_desc = sender
+        else:
+            channel_index = packet.get("channel", 0)
+            reply_target = {"channelIndex": channel_index}
+            target_desc = f"channel {channel_index}"
+
+        logger.info("Question from %s on %s: %s", sender, target_desc, question)
 
         # Check if indexation is in progress
         eta = get_indexing_eta()
@@ -107,8 +116,8 @@ class MeshtasticBridge:
                 answer = rag.query_with_kiwix_context(question, eta_str)
             else:
                 answer = rag.query_without_context(question, eta_str)
-            logger.info("Answer to %s (fallback): %s", sender, answer)
-            self.send_response(sender, answer)
+            logger.info("Answer to %s (fallback): %s", target_desc, answer)
+            self.send_response(answer, **reply_target)
             return
 
         # Check if index is available
@@ -117,15 +126,15 @@ class MeshtasticBridge:
                 answer = rag.query_with_kiwix_context_permanent(question)
             else:
                 answer = rag.query_without_data(question)
-            logger.info("Answer to %s (no index): %s", sender, answer)
-            self.send_response(sender, answer)
+            logger.info("Answer to %s (no index): %s", target_desc, answer)
+            self.send_response(answer, **reply_target)
             return
 
         # Check rate limit
         allowed, denial_msg = self.rate_limiter.check(str(sender))
         if not allowed:
             logger.info("Rate limited %s: %s", sender, denial_msg)
-            self.send_response(sender, denial_msg)
+            self.send_response(denial_msg, **reply_target)
             return
 
         # Process through RAG pipeline
@@ -135,14 +144,22 @@ class MeshtasticBridge:
             logger.error("RAG error: %s", e)
             answer = "Erreur lors du traitement de la question."
 
-        logger.info("Answer to %s: %s", sender, answer)
-        self.send_response(sender, answer)
+        logger.info("Answer to %s: %s", target_desc, answer)
+        self.send_response(answer, **reply_target)
 
-    def send_response(self, destination_id: str, text: str) -> None:
-        """Send a response, chunking if necessary with delays between chunks."""
+    def send_response(self, text: str, **send_kwargs) -> None:
+        """Send a response, chunking if necessary with delays between chunks.
+
+        Keyword arguments are passed directly to interface.sendText(),
+        e.g. destinationId="!abc123" for DMs or channelIndex=0 for channels.
+        """
         if not self.interface:
             logger.error("Cannot send: not connected")
             return
+
+        target_desc = send_kwargs.get(
+            "destinationId", f"channel {send_kwargs.get('channelIndex', '?')}"
+        )
 
         max_bytes = 220
         delay = self.mesh_config["response_delay"]
@@ -154,10 +171,10 @@ class MeshtasticBridge:
 
         for i, chunk in enumerate(chunks):
             try:
-                self.interface.sendText(chunk, destinationId=destination_id)
-                logger.info("Sent chunk %d/%d to %s", i + 1, len(chunks), destination_id)
+                self.interface.sendText(chunk, **send_kwargs)
+                logger.info("Sent chunk %d/%d to %s", i + 1, len(chunks), target_desc)
             except Exception as e:
-                logger.error("Failed to send chunk %d to %s: %s", i + 1, destination_id, e)
+                logger.error("Failed to send chunk %d to %s: %s", i + 1, target_desc, e)
                 break
 
             if i < len(chunks) - 1:

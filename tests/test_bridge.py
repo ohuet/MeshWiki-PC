@@ -36,13 +36,14 @@ MOCK_CONFIG_NO_PORT = {
 }
 
 
-def _make_packet(text, from_node=OTHER_NODE_NUM, to_node=MY_NODE_NUM):
+def _make_packet(text, from_node=OTHER_NODE_NUM, to_node=MY_NODE_NUM, channel=0):
     """Helper to build a Meshtastic-like packet dict."""
     return {
         "from": from_node,
         "to": to_node,
         "fromId": f"!{from_node:08x}",
         "toId": f"!{to_node:08x}" if to_node != BROADCAST else "^all",
+        "channel": channel,
         "decoded": {"text": text},
     }
 
@@ -90,7 +91,27 @@ def test_broadcast_with_prefix_is_processed(mock_rag, mock_config):
 
     mock_rag.query.assert_called_once_with("Capitale de la France")
     bridge.interface.sendText.assert_called_once_with(
-        "Paris", destinationId=f"!{OTHER_NODE_NUM:08x}",
+        "Paris", channelIndex=0,
+    )
+
+
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.meshtastic_bridge.rag")
+def test_broadcast_on_channel_replies_on_same_channel(mock_rag, mock_config):
+    """Broadcast messages on a non-default channel get replies on the same channel."""
+    mock_rag.query.return_value = "Paris"
+
+    limiter = RateLimiter()
+    bridge = MeshtasticBridge(limiter)
+    bridge.my_node_id = MY_NODE_NUM
+    bridge.interface = MagicMock()
+
+    packet = _make_packet("?Capitale de la France", to_node=BROADCAST, channel=2)
+    bridge._on_message_received(packet, MagicMock())
+
+    mock_rag.query.assert_called_once_with("Capitale de la France")
+    bridge.interface.sendText.assert_called_once_with(
+        "Paris", channelIndex=2,
     )
 
 
@@ -167,7 +188,7 @@ def test_send_response_chunks_with_delay(mock_config):
     long_text = "Ceci est un texte long. " * 50
 
     start = time.time()
-    bridge.send_response("!dest", long_text)
+    bridge.send_response(long_text, destinationId="!dest")
     elapsed = time.time() - start
 
     # Should have sent multiple chunks
@@ -184,7 +205,7 @@ def test_send_response_short_text_no_chunking(mock_config):
     bridge = MeshtasticBridge(limiter)
     bridge.interface = MagicMock()
 
-    bridge.send_response("!dest", "Short answer")
+    bridge.send_response("Short answer", destinationId="!dest")
 
     bridge.interface.sendText.assert_called_once_with("Short answer", destinationId="!dest")
 
