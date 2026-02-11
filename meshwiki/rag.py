@@ -126,7 +126,8 @@ def query(question: str) -> str:
         logger.debug("  [%.3f] %s: %.80s...", dist, meta.get("title", "?"), doc)
 
     # Filter out low-relevance results (cosine distance > threshold)
-    max_distance = 0.45
+    cfg = config.load_config()
+    max_distance = cfg.get("rag", {}).get("max_distance", 0.60)
     filtered = [
         (doc, meta, dist)
         for doc, meta, dist in zip(documents, metadatas, distances)

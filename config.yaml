@@ -31,6 +31,9 @@ embeddings:
   #   max_concurrent: 4                   # Requêtes distantes en parallèle
   #   local_workers: 0                    # GPU local en parallèle (0 = remote seul)
 
+rag:
+  max_distance: 0.60            # seuil de distance cosinus max (0=identique, 1=opposé)
+
 vectordb:
   path: "./data/chroma_db"
 
