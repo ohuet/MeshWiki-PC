@@ -1,0 +1,193 @@
+output: data/meshwiki_reunion.zim
+wikipedia:
+  api_url: https://fr.wikipedia.org/w/api.php
+  user_agent: MeshWikiBot/0.1 (offline-wiki-for-mesh-radio)
+  request_delay: 0.5
+  max_retries: 3
+  retry_delay: 5
+categories:
+  max_depth: 10
+  blacklist:
+  - Catégorie:Portail:La Réunion/Articles liés
+  - Catégorie:Projet:La Réunion
+  - Catégorie:Théorie des nœuds
+  list:
+  - name: La Réunion
+  - name: Géographie de La Réunion
+  - name: Histoire de La Réunion
+  - name: Catastrophe à La Réunion
+  - name: Santé à La Réunion
+  - name: Environnement à La Réunion
+  - name: Eau à La Réunion
+  - name: Faune endémique de La Réunion
+  - name: Flore endémique de La Réunion
+  - name: Faune à La Réunion
+  - name: Flore à La Réunion
+  - name: Piton de la Fournaise
+  - name: Cratère volcanique à La Réunion
+  - name: Cône volcanique à La Réunion
+  - name: Volcanologie
+  - name: Type d'éruption volcanique
+  - name: Risque volcanique
+  - name: Cyclone tropical
+  - name: Cyclone tropical à La Réunion
+  - name: Protection cyclonique
+  - name: Prévision des cyclones tropicaux
+  - name: Gestion des risques en météorologie
+  - name: Premiers secours
+  - name: Maladie tropicale
+  - name: Maladie infectieuse tropicale
+  - name: Dengue
+  - name: Brûlure
+  - name: Numéro d'urgence
+  - name: Technique de survie
+  - name: Plan d'urgence
+  - name: Risque naturel
+  - name: Inondation
+  - name: Glissement de terrain
+  - name: Médicament essentiel listé par l'OMS
+  - name: Nœud
+  - name: Cuisine réunionnaise
+  - name: Agriculture à La Réunion
+  - name: Plante médicinale
+articles:
+- Échelle de Saffir-Simpson
+- Échelle de Beaufort
+- Échelle de Fujita améliorée
+- Premiers secours (médecine)
+- Gestes de premiers secours
+- Secourisme
+- Réanimation cardiopulmonaire
+- Manœuvre de Heimlich
+- Méthode de Mofenson
+- Position latérale de sécurité
+- Libération des voies aériennes
+- Garrot
+- Point de compression
+- Pansement compressif
+- Bandage
+- Attelle
+- Collier cervical
+- Écharpe (médecine)
+- Trousse de secours
+- Défibrillateur automatisé externe
+- Alerte (premiers secours)
+- Bilan (premiers secours)
+- Malaise (premiers secours)
+- Protocole GREC
+- Arrêt cardiorespiratoire
+- Hémorragie
+- Arrêt d'une hémorragie
+- Accident vasculaire cérébral
+- Infarctus du myocarde
+- Fibrillation ventriculaire
+- Troubles du rythme cardiaque
+- Fausse route
+- Hyperglycémie
+- Hypoglycémie diabétique
+- Gelure
+- Brûlure
+- Hypothermie
+- Coup de chaleur
+- Noyade
+- Sauvetage aquatique
+- Morsure de serpent
+- Méduse (animal)
+- Chikungunya
+- Zika
+- Leptospirose
+- Paludisme
+- Aedes albopictus
+- Purification de l'eau
+- Déshydratation (médecine)
+- Soluté de réhydratation orale
+- Eau potable
+- Paracétamol
+- Ibuprofène
+- Aspirine
+- Insectifuge
+- Numéro d'appel d'urgence 112
+- SAMU
+- LoRa
+- Meshtastic
+- Radioamateur
+- Techniques de production de feu
+- Abri
+- Signal de détresse
+- Morse (alphabet)
+- Conservation des aliments
+- Panneau solaire
+- Groupe électrogène
+- Boussole
+- Plante comestible
+- Pêche (halieutique)
+- Jardin potager
+- Compostage
+- Nuage
+- Pression atmosphérique
+- Marée
+- Courant marin
+- Stress post-traumatique
+- Deuil
+- Alphabet phonétique de l'OTAN
+- Charpente
+- Étanchéité (construction)
+- Assainissement
+- Latrine
+- Infection
+- Fracture osseuse
+- Entorse
+- Luxation
+- Désinfection
+- Tétanos
+- Suture (médecine)
+- Tsunami
+- Séisme
+- Moustique
+- Termite
+- Nage
+- Couture
+- Cordage
+- Électricité
+- Pile électrique
+- Bougie (éclairage)
+- Lampe à pétrole
+- Réchaud
+- Salaison
+- Séchage (aliment)
+- Fermentation
+- Récupération d'eau de pluie
+- Puits
+- Moisissure
+- Apiculture
+- Élevage
+- Navigation astronomique
+- État de catastrophe naturelle
+- Créole réunionnais
+- Cirques de La Réunion
+- Piton des Neiges
+- Piton de la Fournaise
+- Cyclone Belal
+- Cyclone Batsirai
+- Cyclone Dina
+- Cyclone Firinga
+- Cyclone Gamède
+- Cyclone Hyacinthe
+- Requin bouledogue
+- Requin tigre
+- Attaque de requin
+- Poisson-pierre
+- Poisson-lion
+- Cône (mollusque)
+- Murène
+- Scolopendre
+- Phytothérapie
+- Tisaneur
+static_pages:
+- title: Hébergements d'urgence à La Réunion
+  file: static/hebergements_urgence_reunion.html
+metadata:
+  name: meshwiki_reunion
+  title: MeshWiki La Réunion
+  description: Articles Wikipedia sélectionnés pour l'usage hors-ligne à La Réunion
+  language: fra
