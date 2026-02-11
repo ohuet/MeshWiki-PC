@@ -96,6 +96,12 @@ def _clean_html(html: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
     for el in doc.iter("script", "style"):
         el.drop_tree()
+    # Ensure a space between adjacent block/table elements to avoid
+    # cell values being concatenated (e.g. "<td>1</td><td>2</td>" → "1 2")
+    for el in doc.iter("td", "th", "caption", "li", "p", "h1", "h2", "h3",
+                       "h4", "h5", "h6", "br", "div", "tr"):
+        if el.tail is None or not el.tail.strip():
+            el.tail = " " + (el.tail or "")
     text = doc.text_content()
     text = re.sub(r"\s+", " ", text).strip()
     # Strip the Kiwix/Wikipedia license footer

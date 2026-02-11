@@ -142,7 +142,7 @@ def test_query_filters_distant_results(mock_config, mock_chromadb, mock_st):
     mock_collection.query.return_value = {
         "documents": [["Requin cuivre info", "Requin marteau info"]],
         "metadatas": [[{"title": "Requin cuivre"}, {"title": "Requin marteau"}]],
-        "distances": [[0.55, 0.70]],
+        "distances": [[0.65, 0.80]],
     }
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
