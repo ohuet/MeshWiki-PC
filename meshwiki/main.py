@@ -247,6 +247,7 @@ def main() -> None:
         logger.info("Logs enregistrés dans %s", log_path)
 
     # Check Ollama
+    logger.info("Vérification de la connexion Ollama...")
     if not _check_ollama(cfg):
         logger.warning("Ollama n'est pas accessible à %s", cfg["ollama"]["base_url"])
         logger.warning("Le service démarrera mais les réponses LLM ne fonctionneront pas.")
@@ -276,6 +277,8 @@ def main() -> None:
         logger.info("--nowiki : fichier ZIM désactivé")
 
     # Check/create index
+    if not noindex:
+        logger.info("Chargement de l'index ChromaDB...")
     if not noindex and _index_exists(cfg):
         logger.info("Index ChromaDB disponible")
         # Update check only if --update is passed
@@ -329,5 +332,4 @@ def main() -> None:
         stop_event = _start_update_scheduler(cfg)
 
     # Connect and run
-    logger.info("MeshWiki opérationnel. En attente de messages...")
     bridge.reconnect_loop()

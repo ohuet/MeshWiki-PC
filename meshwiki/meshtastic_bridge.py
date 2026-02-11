@@ -186,6 +186,7 @@ class MeshtasticBridge:
             try:
                 if self.interface is None:
                     self.connect()
+                    logger.info("MeshWiki opérationnel. En attente de messages...")
                 time.sleep(1)
             except Exception as e:
                 logger.exception("Connection lost. Retrying in 30s...")
