@@ -16,8 +16,10 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 
@@ -47,6 +49,7 @@ DEFAULT_CONFIG = {
         "request_delay": 0.5,
         "max_retries": 3,
         "retry_delay": 5,
+        "download_workers": 4,
     },
     "categories": {
         "max_depth": 10,
@@ -56,8 +59,8 @@ DEFAULT_CONFIG = {
             "Catégorie:Théorie des nœuds",
         ],
         "list": [
-            # La Réunion
-            {"name": "La Réunion"},
+            # La Réunion — profondeur réduite (le détail est couvert par les catégories spécifiques)
+            {"name": "La Réunion", "max_depth": 3},
             {"name": "Géographie de La Réunion"},
             {"name": "Histoire de La Réunion"},
             {"name": "Catastrophe à La Réunion"},
@@ -73,37 +76,37 @@ DEFAULT_CONFIG = {
             {"name": "Piton de la Fournaise"},
             {"name": "Cratère volcanique à La Réunion"},
             {"name": "Cône volcanique à La Réunion"},
-            {"name": "Volcanologie"},
-            {"name": "Type d'éruption volcanique"},
-            {"name": "Risque volcanique"},
+            {"name": "Volcanologie", "max_depth": 3},
+            {"name": "Type d'éruption volcanique", "max_depth": 2},
+            {"name": "Risque volcanique", "max_depth": 2},
             # Cyclones
-            {"name": "Cyclone tropical"},
+            {"name": "Cyclone tropical", "max_depth": 3},
             {"name": "Cyclone tropical à La Réunion"},
-            {"name": "Protection cyclonique"},
-            {"name": "Prévision des cyclones tropicaux"},
-            {"name": "Gestion des risques en météorologie"},
+            {"name": "Protection cyclonique", "max_depth": 2},
+            {"name": "Prévision des cyclones tropicaux", "max_depth": 2},
+            {"name": "Gestion des risques en météorologie", "max_depth": 2},
             # Santé / Secours
-            {"name": "Premiers secours"},
-            {"name": "Maladie tropicale"},
-            {"name": "Maladie infectieuse tropicale"},
-            {"name": "Dengue"},
-            {"name": "Brûlure"},
-            {"name": "Numéro d'urgence"},
+            {"name": "Premiers secours", "max_depth": 2},
+            {"name": "Maladie tropicale", "max_depth": 2},
+            {"name": "Maladie infectieuse tropicale", "max_depth": 2},
+            {"name": "Dengue", "max_depth": 3},
+            {"name": "Brûlure", "max_depth": 2},
+            {"name": "Numéro d'urgence", "max_depth": 2},
             # Nœuds
-            {"name": "Nœud"},
+            {"name": "Nœud", "max_depth": 2},
             # Urgences
-            {"name": "Technique de survie"},
-            {"name": "Plan d'urgence"},
-            {"name": "Risque naturel"},
-            {"name": "Inondation"},
-            {"name": "Glissement de terrain"},
+            {"name": "Technique de survie", "max_depth": 2},
+            {"name": "Plan d'urgence", "max_depth": 2},
+            {"name": "Risque naturel", "max_depth": 2},
+            {"name": "Inondation", "max_depth": 2},
+            {"name": "Glissement de terrain", "max_depth": 2},
             # Médicaments
-            {"name": "Médicament essentiel listé par l'OMS"},
+            {"name": "Médicament essentiel listé par l'OMS", "max_depth": 3},
             # Alimentation / Agriculture
             {"name": "Cuisine réunionnaise"},
             {"name": "Agriculture à La Réunion"},
             # Plantes médicinales
-            {"name": "Plante médicinale"},
+            {"name": "Plante médicinale", "max_depth": 2},
         ],
     },
     "articles": [
@@ -227,12 +230,12 @@ DEFAULT_CONFIG = {
         "Électricité",
         "Pile électrique",
         # Éclairage / Cuisson sans électricité
-        "Bougie (éclairage)",
+        "Bougie",
         "Lampe à pétrole",
         "Réchaud",
         # Conservation alimentaire
         "Salaison",
-        "Séchage (aliment)",
+        "Séchage (cuisine)",
         "Fermentation",
         # Eau
         "Récupération d'eau de pluie",
@@ -248,7 +251,9 @@ DEFAULT_CONFIG = {
         "État de catastrophe naturelle",
         # Géographie / Culture
         "Créole réunionnais",
-        "Cirques de La Réunion",
+        "Mafate",
+        "Salazie",
+        "Cilaos",
         "Piton des Neiges",
         "Piton de la Fournaise",
         # Cyclones spécifiques
@@ -310,7 +315,7 @@ def _strip_images(html_str: str) -> str:
                       "metadata", "sistersitebox", "noprint",
                       "mw-empty-elt", "bandeau-portail", "catlinks"}
     for el in doc.iter():
-        classes = set(el.get("class", "").split())
+        classes = set((el.get("class") or "").split())
         if classes & remove_classes:
             el.drop_tree()
 
@@ -662,8 +667,9 @@ def build_zim(config_path: str | Path, resume: bool = False, dry_run: bool = Fal
 
     for cat_entry in cat_cfg.get("list", []):
         cat_name = cat_entry["name"]
-        logger.info("Catégorie : %s", cat_name)
-        articles = api.get_category_articles_recursive(cat_name, max_depth, blacklist)
+        cat_depth = cat_entry.get("max_depth", max_depth)
+        logger.info("Catégorie : %s (profondeur max : %d)", cat_name, cat_depth)
+        articles = api.get_category_articles_recursive(cat_name, cat_depth, blacklist)
         before = len(all_titles)
         all_titles.update(articles)
         logger.info("  → %d articles (%d nouveaux)", len(articles), len(all_titles) - before)
@@ -679,7 +685,10 @@ def build_zim(config_path: str | Path, resume: bool = False, dry_run: bool = Fal
     if dry_run:
         sorted_titles = sorted(all_titles)
         for t in sorted_titles:
-            print(f"  - {t}")
+            try:
+                print(f"  - {t}")
+            except UnicodeEncodeError:
+                print(f"  - {t.encode('ascii', errors='replace').decode()}")
         return {"article_count": len(all_titles), "failed_count": 0, "output": None}
 
     # ------------------------------------------------------------------
@@ -694,9 +703,10 @@ def build_zim(config_path: str | Path, resume: bool = False, dry_run: bool = Fal
 
     titles_list = sorted(all_titles)
     to_download = [t for t in titles_list if t not in staging_index]
+    num_workers = wiki_cfg.get("download_workers", 4)
     logger.info(
-        "%d articles à télécharger (%d déjà en staging)",
-        len(to_download), len(titles_list) - len(to_download),
+        "%d articles à télécharger (%d déjà en staging, %d workers)",
+        len(to_download), len(titles_list) - len(to_download), num_workers,
     )
 
     progress = ProgressDisplay()
@@ -704,37 +714,68 @@ def build_zim(config_path: str | Path, resume: bool = False, dry_run: bool = Fal
     start_time = time.monotonic()
     failed_count = 0
     downloaded = 0
+    done_count = 0
+    staging_lock = threading.Lock()
+
+    # Shared API client — single rate limiter for all workers.
+    # The parallelism overlaps HTML processing / disk I/O with network waits,
+    # without exceeding the API rate limit.
+    shared_api = WikipediaAPI(
+        api_url=wiki_cfg["api_url"],
+        user_agent=wiki_cfg["user_agent"],
+        request_delay=wiki_cfg.get("request_delay", 0.5),
+        max_retries=wiki_cfg.get("max_retries", 3),
+        retry_delay=wiki_cfg.get("retry_delay", 5),
+    )
+    # Make rate limiting thread-safe
+    shared_api._rate_lock = threading.Lock()
+    _orig_rate_limit = shared_api._rate_limit
+    def _thread_safe_rate_limit():
+        with shared_api._rate_lock:
+            _orig_rate_limit()
+    shared_api._rate_limit = _thread_safe_rate_limit
+
+    def _download_one(title):
+        """Download and clean one article. Returns (title, html) or (title, None)."""
+        html = shared_api.get_article_html(title)
+        if html is None:
+            return title, None
+        return title, _strip_images(html)
 
     try:
-        for i, title in enumerate(to_download):
-            progress.set_info(f"Téléchargement : {title[:60]}")
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_download_one, t): t for t in to_download}
 
-            html = api.get_article_html(title)
-            if html is None:
-                failed_count += 1
-                logger.warning("Article ignoré (échec) : %s", title)
-            else:
-                cleaned = _strip_images(html)
-                _save_article_staging(title, cleaned, staging_index)
-                downloaded += 1
+            for fut in as_completed(futures):
+                title, html = fut.result()
 
-            # Checkpoint every 50 articles
-            if (i + 1) % 50 == 0:
-                _save_staging_index(staging_index)
+                with staging_lock:
+                    if html is None:
+                        failed_count += 1
+                        logger.warning("Article ignoré (échec) : %s", title)
+                    else:
+                        _save_article_staging(title, html, staging_index)
+                        downloaded += 1
 
-            # Progress
-            done = i + 1
-            total = len(to_download)
-            elapsed = time.monotonic() - start_time
-            pct = done / total * 100
-            if done > 0:
-                remaining = elapsed / done * (total - done)
-                eta_dur = _format_eta(remaining)
-                eta_time = time.strftime("%H:%M", time.localtime(time.time() + remaining))
-            else:
-                eta_dur = "?"
-                eta_time = "?"
-            progress.set_progress(pct, downloaded, eta_dur, eta_time)
+                    done_count += 1
+
+                    # Checkpoint every 50 articles
+                    if done_count % 50 == 0:
+                        _save_staging_index(staging_index)
+
+                    # Progress
+                    total = len(to_download)
+                    elapsed = time.monotonic() - start_time
+                    pct = done_count / total * 100
+                    if done_count > 0:
+                        remaining = elapsed / done_count * (total - done_count)
+                        eta_dur = _format_eta(remaining)
+                        eta_time = time.strftime("%H:%M", time.localtime(time.time() + remaining))
+                    else:
+                        eta_dur = "?"
+                        eta_time = "?"
+                    progress.set_info(f"Téléchargement : {title[:60]}")
+                    progress.set_progress(pct, downloaded, eta_dur, eta_time)
     except KeyboardInterrupt:
         logger.info("Interruption — sauvegarde du staging...")
     finally:

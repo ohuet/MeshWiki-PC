@@ -421,6 +421,19 @@ class TestInitConfig:
         assert "Échelle de Saffir-Simpson" in articles
         assert "Réanimation cardiopulmonaire" in articles
 
+    def test_default_config_has_per_category_depths(self):
+        """Broad generic categories should have limited max_depth."""
+        cats = DEFAULT_CONFIG["categories"]["list"]
+        cats_by_name = {c["name"]: c for c in cats}
+        # Broad categories should have explicit low max_depth
+        assert cats_by_name["Premiers secours"].get("max_depth", 10) <= 3
+        assert cats_by_name["Risque naturel"].get("max_depth", 10) <= 3
+        assert cats_by_name["Cyclone tropical"].get("max_depth", 10) <= 3
+        # La Réunion top-level uses limited depth (specifics are covered by sub-categories)
+        assert cats_by_name["La Réunion"].get("max_depth", 10) <= 5
+        # La Réunion-specific categories use default (high) depth
+        assert "max_depth" not in cats_by_name["Géographie de La Réunion"]
+
 
 # ---------------------------------------------------------------------------
 # build_zim integration
@@ -456,6 +469,45 @@ class TestBuildZimDryRun:
 
         assert stats["article_count"] == 3  # 2 from cat + 1 explicit
         assert stats["output"] is None
+
+    def test_per_category_max_depth(self, tmp_path):
+        """Per-category max_depth overrides the global max_depth."""
+        config_path = tmp_path / "config.yaml"
+        cfg = {
+            "output": str(tmp_path / "test.zim"),
+            "wikipedia": {
+                "api_url": "https://fr.wikipedia.org/w/api.php",
+                "user_agent": "TestBot/0.1",
+                "request_delay": 0,
+                "max_retries": 1,
+                "retry_delay": 0,
+            },
+            "categories": {
+                "max_depth": 10,
+                "blacklist": [],
+                "list": [
+                    {"name": "DeepCat"},
+                    {"name": "ShallowCat", "max_depth": 1},
+                ],
+            },
+            "articles": [],
+            "metadata": {"name": "test", "title": "Test", "description": "Test", "language": "fra"},
+        }
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f)
+
+        depth_calls = {}
+
+        def mock_recursive(cat, max_depth, blacklist, **kwargs):
+            depth_calls[cat] = max_depth
+            return {f"Article_{cat}"}
+
+        with patch.object(WikipediaAPI, "get_category_articles_recursive", side_effect=mock_recursive):
+            stats = build_zim(config_path, dry_run=True)
+
+        assert depth_calls["DeepCat"] == 10
+        assert depth_calls["ShallowCat"] == 1
+        assert stats["article_count"] == 2
 
     def test_missing_config_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):

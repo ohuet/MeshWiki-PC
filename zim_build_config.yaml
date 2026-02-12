@@ -5,6 +5,7 @@ wikipedia:
   request_delay: 0.5
   max_retries: 3
   retry_delay: 5
+  download_workers: 4
 categories:
   max_depth: 10
   blacklist:
@@ -12,44 +13,76 @@ categories:
   - Catégorie:Projet:La Réunion
   - Catégorie:Théorie des nœuds
   list:
+  # La Réunion — profondeur réduite (le détail est couvert par les catégories spécifiques)
   - name: La Réunion
+    max_depth: 3
   - name: Géographie de La Réunion
   - name: Histoire de La Réunion
   - name: Catastrophe à La Réunion
   - name: Santé à La Réunion
   - name: Environnement à La Réunion
   - name: Eau à La Réunion
+  # Faune / Flore
   - name: Faune endémique de La Réunion
   - name: Flore endémique de La Réunion
   - name: Faune à La Réunion
   - name: Flore à La Réunion
+  # Volcanologie
   - name: Piton de la Fournaise
   - name: Cratère volcanique à La Réunion
   - name: Cône volcanique à La Réunion
   - name: Volcanologie
+    max_depth: 3
   - name: Type d'éruption volcanique
+    max_depth: 2
   - name: Risque volcanique
+    max_depth: 2
+  # Cyclones
   - name: Cyclone tropical
+    max_depth: 3
   - name: Cyclone tropical à La Réunion
   - name: Protection cyclonique
+    max_depth: 2
   - name: Prévision des cyclones tropicaux
+    max_depth: 2
   - name: Gestion des risques en météorologie
+    max_depth: 2
+  # Santé / Secours
   - name: Premiers secours
+    max_depth: 2
   - name: Maladie tropicale
+    max_depth: 2
   - name: Maladie infectieuse tropicale
+    max_depth: 2
   - name: Dengue
+    max_depth: 3
   - name: Brûlure
+    max_depth: 2
   - name: Numéro d'urgence
-  - name: Technique de survie
-  - name: Plan d'urgence
-  - name: Risque naturel
-  - name: Inondation
-  - name: Glissement de terrain
-  - name: Médicament essentiel listé par l'OMS
+    max_depth: 2
+  # Nœuds
   - name: Nœud
+    max_depth: 2
+  # Urgences
+  - name: Technique de survie
+    max_depth: 2
+  - name: Plan d'urgence
+    max_depth: 2
+  - name: Risque naturel
+    max_depth: 2
+  - name: Inondation
+    max_depth: 2
+  - name: Glissement de terrain
+    max_depth: 2
+  # Médicaments
+  - name: Médicament essentiel listé par l'OMS
+    max_depth: 3
+  # Alimentation / Agriculture
   - name: Cuisine réunionnaise
   - name: Agriculture à La Réunion
+  # Plantes médicinales
   - name: Plante médicinale
+    max_depth: 2
 articles:
 - Échelle de Saffir-Simpson
 - Échelle de Beaufort
@@ -150,11 +183,11 @@ articles:
 - Cordage
 - Électricité
 - Pile électrique
-- Bougie (éclairage)
+- Bougie
 - Lampe à pétrole
 - Réchaud
 - Salaison
-- Séchage (aliment)
+- Séchage (cuisine)
 - Fermentation
 - Récupération d'eau de pluie
 - Puits
@@ -164,7 +197,9 @@ articles:
 - Navigation astronomique
 - État de catastrophe naturelle
 - Créole réunionnais
-- Cirques de La Réunion
+- Mafate
+- Salazie
+- Cilaos
 - Piton des Neiges
 - Piton de la Fournaise
 - Cyclone Belal
