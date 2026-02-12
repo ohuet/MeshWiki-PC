@@ -208,8 +208,8 @@ def _start_update_scheduler(config: dict) -> threading.Event:
                         zim_path.name,
                     )
 
-            # Check every hour
-            stop_event.wait(3600)
+            # Check once a day (interval_days controls actual update frequency)
+            stop_event.wait(86400)
 
     thread = threading.Thread(target=_scheduler, name="update-scheduler", daemon=True)
     thread.start()

@@ -92,6 +92,13 @@ class WikipediaUpdater:
         # ZIM already present on disk (e.g. LAST_UPDATE_FILE missing but file kept)
         if dest.exists():
             logger.info("ZIM file already present: %s", dest.name)
+            # Update tracking so _is_update_due won't re-trigger every cycle
+            LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(LAST_UPDATE_FILE, "w") as f:
+                json.dump({
+                    "last_filename": filename,
+                    "last_update": datetime.now().isoformat(),
+                }, f, indent=2)
             return dest
 
         download_path = dest.with_suffix(".zim.download")
