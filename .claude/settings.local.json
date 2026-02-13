@@ -21,7 +21,28 @@
       "Bash(git reset:*)",
       "Bash(dir:*)",
       "Bash(python:*)",
-      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/collection_state.py meshwiki/wikipedia_updater.py meshwiki/rag.py meshwiki/main.py meshwiki/wikipedia_indexer.py tests/test_updater.py tests/test_collection_state.py)"
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/collection_state.py meshwiki/wikipedia_updater.py meshwiki/rag.py meshwiki/main.py meshwiki/wikipedia_indexer.py tests/test_updater.py tests/test_collection_state.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" diff meshwiki/main.py meshwiki/rag.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/main.py meshwiki/rag.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" commit -m \"$\\(cat <<''EOF''\nFix _index_exists retournait False à cause de numpy array\n\n- main.py :\n  fix if sample[\"embeddings\"] → len\\(...\\) > 0 \\(numpy ambiguous truth value\\)\n  ajout logger.warning dans except pour ne plus avaler les erreurs\n- rag.py :\n  même fix dans is_available\\(\\)\n  ajout logger.warning dans except\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" add meshwiki/rag.py)",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" commit -m \"$\\(cat <<''EOF''\nAssouplir le system prompt RAG pour permettre la synthèse des extraits\n\n- rag.py :\n  remplacer \"Si l'information n'apparaît PAS explicitement\" par\n  \"Si les extraits ne contiennent PAS d 'éléments permettant de répondre\"\n  dans les 3 prompts concernés \\(SYSTEM_PROMPT, KIWIX, KIWIX_PERMANENT\\)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "mcp__context7__resolve-library-id",
+      "WebSearch",
+      "mcp__context7__query-docs",
+      "Bash(cmd /c \"dir /ad D:\\\\Perso\\\\SideProjects\\\\MeshWiki\\\\data\\\\chroma_db_a\"\")",
+      "Bash(cmd /c \"dir /ad D:\\\\Perso\\\\SideProjects\\\\MeshWiki\\\\data\\\\chroma_db_a\")",
+      "Bash(git -C \"D:\\\\Perso\\\\SideProjects\\\\MeshWiki\" diff meshwiki/main.py)",
+      "Bash(ls:*)",
+      "WebFetch(domain:fr.wikipedia.org)",
+      "Bash(curl:*)",
+      "WebFetch(domain:python-libzim.readthedocs.io)",
+      "WebFetch(domain:www.mediawiki.org)",
+      "WebFetch(domain:www.santeenfrance.fr)",
+      "mcp__browsermcp__browser_navigate",
+      "Bash(python3:*)",
+      "Bash(set:*)",
+      "Bash(git status:*)"
     ]
   }
 }

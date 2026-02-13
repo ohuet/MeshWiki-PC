@@ -49,7 +49,7 @@ DEFAULT_CONFIG = {
         "request_delay": 0.5,
         "max_retries": 3,
         "retry_delay": 5,
-        "download_workers": 4,
+        "download_workers": 1,
     },
     "categories": {
         "max_depth": 10,
