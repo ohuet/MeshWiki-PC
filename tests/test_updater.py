@@ -122,22 +122,25 @@ def test_download_skips_if_zim_already_exists(mock_get, mock_file, mock_config, 
 @patch("meshwiki.wikipedia_updater.reset_collection")
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.collection_state")
-def test_reindex_success(mock_cs, mock_index_zim, mock_reset, mock_config):
+@patch("meshwiki.wikipedia_updater.discover_zims")
+def test_reindex_success(mock_discover, mock_cs, mock_index_zim, mock_reset, mock_config):
     mock_index_zim.return_value = {"article_count": 100, "chunk_count": 500}
     mock_cs.get_inactive_db_path.return_value = "./data/chroma_db_b"
     mock_cs.get_inactive_slot.return_value = "b"
     mock_cs.get_active_db_path.return_value = "./data/chroma_db_a"
 
-    updater = WikipediaUpdater()
     zim_path = MagicMock(spec=Path)
     zim_path.name = "test.zim"
+    mock_discover.return_value = [zim_path]
+
+    updater = WikipediaUpdater()
 
     with patch("builtins.open", mock_open()), \
          patch("meshwiki.wikipedia_updater.threading") as mock_threading:
         result = updater.reindex(zim_path)
 
     assert result is True
-    # Indexes into the inactive database
+    # Indexes into the inactive database (single ZIM path)
     mock_index_zim.assert_called_once_with(zim_path, db_path="./data/chroma_db_b")
     # Pointer is updated to new slot
     mock_cs.set_active_slot.assert_called_once_with("b")
@@ -153,13 +156,17 @@ def test_reindex_success(mock_cs, mock_index_zim, mock_reset, mock_config):
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch("meshwiki.wikipedia_updater.index_zim")
 @patch("meshwiki.wikipedia_updater.collection_state")
-def test_reindex_failure_preserves_old_index(mock_cs, mock_index_zim, mock_config):
+@patch("meshwiki.wikipedia_updater.discover_zims", return_value=[])
+def test_reindex_failure_preserves_old_index(mock_discover, mock_cs, mock_index_zim, mock_config):
     mock_index_zim.side_effect = Exception("Indexation error")
     mock_cs.get_inactive_db_path.return_value = "./data/chroma_db_b"
     mock_cs.get_inactive_slot.return_value = "b"
 
+    zim_path = MagicMock(spec=Path)
+    mock_discover.return_value = [zim_path]
+
     updater = WikipediaUpdater()
-    result = updater.reindex(MagicMock(spec=Path))
+    result = updater.reindex(zim_path)
 
     assert result is False
     # Pointer is NOT updated on failure — old index stays active

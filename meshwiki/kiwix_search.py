@@ -7,10 +7,9 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-_zim_path: str | None = None
+_zim_paths: list[str] = []
 _zim_lock = threading.Lock()
-_archive = None
-_archive_path: str | None = None
+_archives: dict[str, object] = {}  # path → Archive cache
 _disabled = False
 
 # French stop words — stripped from queries before searching
@@ -30,15 +29,24 @@ _STOP_WORDS = frozenset(
 )
 
 
-def set_zim_path(path) -> None:
-    """Set the ZIM file path (thread-safe). Pass None to clear."""
-    global _zim_path, _archive, _archive_path
+def set_zim_paths(paths: list) -> None:
+    """Set the list of ZIM file paths (thread-safe), ordered by priority."""
+    global _zim_paths, _archives
     with _zim_lock:
-        _zim_path = str(path) if path is not None else None
-        # Invalidate cached archive if path changed
-        if _archive_path != _zim_path:
-            _archive = None
-            _archive_path = None
+        new_paths = [str(p) for p in paths]
+        # Close archives that are no longer in the list
+        removed = set(_archives.keys()) - set(new_paths)
+        for r in removed:
+            _archives.pop(r, None)
+        _zim_paths = new_paths
+
+
+def set_zim_path(path) -> None:
+    """Legacy single-path setter. Pass None to clear."""
+    if path is None:
+        set_zim_paths([])
+    else:
+        set_zim_paths([path])
 
 
 def set_disabled(value: bool) -> None:
@@ -47,27 +55,48 @@ def set_disabled(value: bool) -> None:
     _disabled = value
 
 
+def has_zim_paths() -> bool:
+    """Return True if at least one ZIM file is configured and not disabled."""
+    if _disabled:
+        return False
+    with _zim_lock:
+        return len(_zim_paths) > 0
+
+
 def get_zim_path() -> str | None:
-    """Return the current ZIM file path, or None if not set or disabled."""
+    """Legacy getter — return the first ZIM path, or None if empty/disabled."""
     if _disabled:
         return None
     with _zim_lock:
-        return _zim_path
+        return _zim_paths[0] if _zim_paths else None
 
 
-def _get_archive():
-    """Lazy-open and cache the libzim Archive."""
-    global _archive, _archive_path
-    path = get_zim_path()
-    if path is None:
-        return None
+def _get_archive(path: str):
+    """Lazy-open and cache a libzim Archive for the given path."""
     with _zim_lock:
-        if _archive is not None and _archive_path == path:
-            return _archive
-        from libzim.reader import Archive
-        _archive = Archive(path)
-        _archive_path = path
-        return _archive
+        if path in _archives:
+            return _archives[path]
+    from libzim.reader import Archive
+    archive = Archive(path)
+    with _zim_lock:
+        _archives[path] = archive
+    return archive
+
+
+def _get_archives() -> list[tuple[str, object]]:
+    """Return list of (path, archive) for all current ZIM paths, in priority order."""
+    if _disabled:
+        return []
+    with _zim_lock:
+        paths = list(_zim_paths)
+    result = []
+    for path in paths:
+        try:
+            archive = _get_archive(path)
+            result.append((path, archive))
+        except Exception as e:
+            logger.warning("Impossible d'ouvrir le ZIM %s : %s", path, e)
+    return result
 
 
 def _clean_html(raw_html: str) -> str:
@@ -114,29 +143,15 @@ def _read_entry(archive, path: str, max_chars: int) -> dict | None:
     return None
 
 
-def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) -> list[dict]:
-    """Search the ZIM file for articles matching the query.
-
-    Combines title-based suggestion search with full-text search
-    for better recall. Keywords are extracted from the query to
-    improve Xapian matching on natural-language questions.
-
-    Returns a list of {"title": str, "content": str} dicts.
-    Returns an empty list if no ZIM is available or search fails.
-    """
-    archive = _get_archive()
-    if archive is None:
-        return []
-
-    keywords = _extract_keywords(query)
-    logger.debug("Kiwix search: query=%r → keywords=%r", query, keywords)
-    if not keywords:
-        keywords = query  # Fallback to raw query if all words were filtered
-
-    seen_paths: set[str] = set()
+def _search_single_archive(
+    archive, keywords: str, num_results: int, max_chars: int,
+    seen_titles: set[str],
+) -> list[dict]:
+    """Search a single ZIM archive, skipping titles already seen."""
     output: list[dict] = []
+    seen_paths: set[str] = set()
 
-    # 1. Title/suggestion search — best for direct article matches
+    # 1. Title/suggestion search
     try:
         from libzim.suggestion import SuggestionSearcher
 
@@ -146,14 +161,15 @@ def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) ->
             if path in seen_paths:
                 continue
             seen_paths.add(path)
-            result = _read_entry(archive, path, max_chars_per_result)
-            if result:
+            result = _read_entry(archive, path, max_chars)
+            if result and result["title"] not in seen_titles:
+                seen_titles.add(result["title"])
                 output.append(result)
                 logger.debug("Kiwix suggestion hit: %s", result["title"])
     except Exception as e:
         logger.debug("Kiwix suggestion search failed: %s", e)
 
-    # 2. Full-text search — complements title search with content matches
+    # 2. Full-text search
     remaining = num_results - len(output)
     if remaining > 0:
         try:
@@ -162,18 +178,54 @@ def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) ->
             searcher = Searcher(archive)
             zim_query = Query().set_query(keywords)
             results = searcher.search(zim_query)
-            for path in results.getResults(0, remaining + 3):  # Fetch extra to account for dedup
+            for path in results.getResults(0, remaining + 3):
                 if path in seen_paths:
                     continue
                 seen_paths.add(path)
-                result = _read_entry(archive, path, max_chars_per_result)
-                if result:
+                result = _read_entry(archive, path, max_chars)
+                if result and result["title"] not in seen_titles:
+                    seen_titles.add(result["title"])
                     output.append(result)
                     logger.debug("Kiwix fulltext hit: %s", result["title"])
-                if len(output) >= num_results:
+                if len(output) >= remaining:
                     break
         except Exception as e:
             logger.debug("Kiwix full-text search failed: %s", e)
+
+    return output
+
+
+def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) -> list[dict]:
+    """Search all ZIM files for articles matching the query.
+
+    Iterates over ZIM files in priority order (smallest first).
+    Results from higher-priority ZIMs take precedence: titles already
+    found are not duplicated from lower-priority ZIMs.
+
+    Returns a list of {"title": str, "content": str} dicts.
+    Returns an empty list if no ZIM is available or search fails.
+    """
+    archives = _get_archives()
+    if not archives:
+        return []
+
+    keywords = _extract_keywords(query)
+    logger.debug("Kiwix search: query=%r → keywords=%r", query, keywords)
+    if not keywords:
+        keywords = query  # Fallback to raw query if all words were filtered
+
+    seen_titles: set[str] = set()
+    output: list[dict] = []
+
+    for path, archive in archives:
+        remaining = num_results - len(output)
+        if remaining <= 0:
+            break
+
+        results = _search_single_archive(
+            archive, keywords, remaining, max_chars_per_result, seen_titles,
+        )
+        output.extend(results)
 
     if not output:
         logger.info("Kiwix search: no results for %r (keywords: %r)", query, keywords)

@@ -21,6 +21,7 @@ from meshwiki import config, collection_state
 from meshwiki.meshtastic_bridge import MeshtasticBridge
 from meshwiki.rate_limiter import RateLimiter
 from meshwiki.wikipedia_updater import WikipediaUpdater, LAST_UPDATE_FILE
+from meshwiki.zim_discovery import discover_zims
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,19 +134,40 @@ def _wants_nowiki() -> bool:
     return any(arg in ("/nowiki", "-nowiki", "--nowiki") for arg in sys.argv[1:])
 
 
-def _find_existing_zim(config: dict) -> Path | None:
-    """Find an existing .zim file in the temp directory."""
-    temp_dir = Path(config["updater"]["temp_dir"])
-    if not temp_dir.exists():
-        return None
-    zim_files = sorted(temp_dir.glob("*.zim"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return zim_files[0] if zim_files else None
+def _start_zim_watcher(interval: int = 30) -> threading.Event:
+    """Watch data/ for added/removed ZIM files and update kiwix_search paths.
+
+    Returns a stop event for clean shutdown.
+    """
+    stop_event = threading.Event()
+    previous_paths: list[str] = [str(p) for p in discover_zims()]
+
+    def _watcher():
+        nonlocal previous_paths
+        while not stop_event.is_set():
+            stop_event.wait(interval)
+            if stop_event.is_set():
+                break
+            current_paths = [str(p) for p in discover_zims()]
+            if current_paths != previous_paths:
+                added = set(current_paths) - set(previous_paths)
+                removed = set(previous_paths) - set(current_paths)
+                for p in added:
+                    logger.info("Nouveau ZIM détecté : %s", Path(p).name)
+                for p in removed:
+                    logger.info("ZIM retiré : %s", Path(p).name)
+                kiwix_search.set_zim_paths(current_paths)
+                previous_paths = current_paths
+
+    thread = threading.Thread(target=_watcher, name="zim-watcher", daemon=True)
+    thread.start()
+    return stop_event
 
 
 def _run_background_download(config: dict) -> None:
     """Download a ZIM file in background (without indexation).
 
-    When the download completes, activates the Kiwix fallback.
+    When the download completes, refreshes ZIM paths for Kiwix search.
     """
     def _download():
         try:
@@ -158,7 +180,7 @@ def _run_background_download(config: dict) -> None:
         updater = WikipediaUpdater()
         zim_path = updater.download_dump()
         if zim_path is not None:
-            kiwix_search.set_zim_path(zim_path)
+            kiwix_search.set_zim_paths(discover_zims())
             logger.info("ZIM téléchargé : %s — lancez avec --index pour indexer", zim_path.name)
 
     thread = threading.Thread(target=_download, name="zim-downloader", daemon=True)
@@ -202,7 +224,7 @@ def _start_update_scheduler(config: dict) -> threading.Event:
                 updater = WikipediaUpdater()
                 zim_path = updater.download_dump()
                 if zim_path is not None:
-                    kiwix_search.set_zim_path(zim_path)
+                    kiwix_search.set_zim_paths(discover_zims())
                     logger.info(
                         "Nouveau ZIM téléchargé : %s — lancez avec --index pour réindexer",
                         zim_path.name,
@@ -276,6 +298,17 @@ def main() -> None:
         kiwix_search.set_disabled(True)
         logger.info("--nowiki : fichier ZIM désactivé")
 
+    # Discover ZIM files and set up Kiwix search
+    if not nowiki:
+        zim_paths = discover_zims()
+        if zim_paths:
+            kiwix_search.set_zim_paths(zim_paths)
+            logger.info(
+                "Recherche Kiwix activée (%d ZIM) : %s",
+                len(zim_paths),
+                ", ".join(p.name for p in zim_paths),
+            )
+
     # Check/create index
     if not noindex:
         logger.info("Chargement de l'index ChromaDB...")
@@ -294,17 +327,13 @@ def main() -> None:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
                 _run_background_download(cfg)
     else:
-        if not nowiki:
-            zim_path = _find_existing_zim(cfg)
-            if zim_path:
-                kiwix_search.set_zim_path(zim_path)
-                logger.info("Recherche Kiwix activée comme fallback (%s)", zim_path.name)
-            elif not offline:
+        if not nowiki and not kiwix_search.has_zim_paths():
+            if not offline:
                 logger.info("Aucun ZIM trouvé — téléchargement en arrière-plan...")
                 _run_background_download(cfg)
             else:
                 logger.info("Aucun index ni ZIM trouvé — mode offline, le LLM répondra seul.")
-        else:
+        elif nowiki:
             if not offline and not noindex:
                 logger.info("Le LLM répondra seul (ZIM désactivé, pas d'index)")
 
@@ -315,21 +344,25 @@ def main() -> None:
             logger.info("Lancez avec --index pour créer l'index ChromaDB")
 
     # Graceful shutdown
-    stop_event = None
+    stop_events: list[threading.Event] = []
 
     def _signal_handler(sig, frame):
         logger.info("Arrêt de MeshWiki...")
         bridge.close()
-        if stop_event:
-            stop_event.set()
+        for ev in stop_events:
+            ev.set()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    # Start ZIM watcher (hot-reload)
+    if not nowiki:
+        stop_events.append(_start_zim_watcher())
+
     # Start update scheduler (disabled in offline mode)
     if cfg["updater"]["enabled"] and not _wants_offline():
-        stop_event = _start_update_scheduler(cfg)
+        stop_events.append(_start_update_scheduler(cfg))
 
     # Connect and run
     bridge.reconnect_loop()

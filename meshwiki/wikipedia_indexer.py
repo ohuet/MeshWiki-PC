@@ -232,7 +232,13 @@ def _save_checkpoint(
         os.fsync(f.fileno())
 
 
-def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str | None = None) -> dict:
+def index_zim(
+    zim_path: Path,
+    collection_name: str = "wikipedia",
+    db_path: str | None = None,
+    skip_titles: set[str] | None = None,
+    append: bool = False,
+) -> dict:
     """Read a ZIM file and index its content into ChromaDB.
 
     Uses a producer-consumer pipeline: the producer thread reads ZIM entries,
@@ -241,8 +247,10 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
 
     Args:
         db_path: ChromaDB database directory. Defaults to config vectordb.path.
+        skip_titles: Set of article titles to skip (already indexed by a prior ZIM).
+        append: If True, do not delete the existing collection on fresh start.
 
-    Returns stats: {"article_count": int, "chunk_count": int}
+    Returns stats: {"article_count": int, "chunk_count": int, "indexed_titles": set[str]}
     """
     from libzim.reader import Archive
     from sentence_transformers import SentenceTransformer
@@ -312,11 +320,12 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
         start_index = 0
         article_count = 0
         chunk_count = 0
-        # Delete existing collection for fresh indexing
-        try:
-            client.delete_collection(collection_name)
-        except (ValueError, chromadb.errors.NotFoundError):
-            pass
+        # Delete existing collection for fresh indexing (unless appending)
+        if not append:
+            try:
+                client.delete_collection(collection_name)
+            except (ValueError, chromadb.errors.NotFoundError):
+                pass
 
     collection = client.get_or_create_collection(
         name=collection_name,
@@ -350,6 +359,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
 
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
     producer_completed = threading.Event()
+    p_indexed_titles: set[str] = set()
 
     def _producer():
         nonlocal article_count, chunk_count
@@ -370,13 +380,18 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
                 if not _is_content_article(entry):
                     continue
 
+                title = entry.title
+
+                # Skip titles already indexed by a higher-priority ZIM
+                if skip_titles is not None and title in skip_titles:
+                    continue
+
                 try:
                     item = entry.get_item()
                     content = bytes(item.content).decode("utf-8", errors="ignore")
                 except Exception:
                     continue
 
-                title = entry.title
                 text = _clean_html(content)
 
                 if len(text) < 50:
@@ -387,6 +402,7 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
                     continue
 
                 p_article_count += 1
+                p_indexed_titles.add(title)
 
                 for j, chunk in enumerate(chunks):
                     doc_id = f"{collection_name}_{p_article_count}_{j}"
@@ -634,9 +650,199 @@ def index_zim(zim_path: Path, collection_name: str = "wikipedia", db_path: str |
     _set_indexing_eta(None)
 
     elapsed = time.monotonic() - start_time
-    stats = {"article_count": article_count, "chunk_count": chunk_count}
+    stats = {"article_count": article_count, "chunk_count": chunk_count, "indexed_titles": p_indexed_titles}
     logger.info(
         "Indexation terminée : %d articles, %d chunks en %s",
         article_count, chunk_count, _format_eta(elapsed),
     )
     return stats
+
+
+def _collect_titles(zim_path: Path) -> set[str]:
+    """Quickly collect all content article titles from a ZIM file (no content read)."""
+    from libzim.reader import Archive
+
+    archive = Archive(str(zim_path))
+    titles: set[str] = set()
+    for i in range(archive.entry_count):
+        try:
+            entry = archive._get_entry_by_id(i)
+        except Exception:
+            continue
+        if _is_content_article(entry):
+            titles.add(entry.title)
+    logger.info("Titres collectés depuis %s : %d articles", zim_path.name, len(titles))
+    return titles
+
+
+MULTI_CHECKPOINT_FILE = CHECKPOINT_FILE  # Same file, enriched format
+
+
+def _load_multi_checkpoint(
+    collection_name: str, zim_names: list[str],
+) -> dict | None:
+    """Load a multi-ZIM checkpoint if it matches the current ZIM list."""
+    for path in (MULTI_CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE.with_suffix(".tmp")):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not data.get("multi"):
+                continue
+            if data["collection_name"] != collection_name:
+                continue
+            if data["zim_files"] != zim_names:
+                logger.info(
+                    "Checkpoint multi-ZIM ignoré (fichiers changés : %s vs %s)",
+                    data["zim_files"], zim_names,
+                )
+                continue
+            return data
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning("Checkpoint multi-ZIM corrompu (%s) : %s", path, e)
+    return None
+
+
+def _save_multi_checkpoint(
+    collection_name: str,
+    zim_names: list[str],
+    completed_zims: list[str],
+    current_zim: str | None,
+    last_entry_index: int,
+    article_count: int,
+    chunk_count: int,
+) -> None:
+    """Save multi-ZIM indexing progress."""
+    import shutil
+    MULTI_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MULTI_CHECKPOINT_FILE.with_suffix(".tmp")
+    data = json.dumps({
+        "multi": True,
+        "collection_name": collection_name,
+        "zim_files": zim_names,
+        "completed_zims": completed_zims,
+        "current_zim": current_zim,
+        "last_entry_index": last_entry_index,
+        "article_count": article_count,
+        "chunk_count": chunk_count,
+    })
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    shutil.copy2(tmp, MULTI_CHECKPOINT_FILE)
+    with open(MULTI_CHECKPOINT_FILE, "r+b") as f:
+        os.fsync(f.fileno())
+
+
+def index_all_zims(
+    zim_paths: list[Path],
+    collection_name: str = "wikipedia",
+    db_path: str | None = None,
+) -> dict:
+    """Index multiple ZIM files with deduplication (smaller ZIMs have priority).
+
+    Args:
+        zim_paths: ZIM files in priority order (smallest first).
+        collection_name: ChromaDB collection name.
+        db_path: ChromaDB database directory.
+
+    Returns aggregated stats: {"article_count": int, "chunk_count": int}
+    """
+    if not zim_paths:
+        logger.warning("Aucun fichier ZIM à indexer")
+        return {"article_count": 0, "chunk_count": 0}
+
+    if len(zim_paths) == 1:
+        stats = index_zim(zim_paths[0], collection_name, db_path)
+        stats.pop("indexed_titles", None)
+        return stats
+
+    zim_names = [p.name for p in zim_paths]
+    checkpoint = _load_multi_checkpoint(collection_name, zim_names)
+
+    completed_zims: list[str] = []
+    seen_titles: set[str] = set()
+    total_articles = 0
+    total_chunks = 0
+    is_first_zim = True
+
+    if checkpoint is not None:
+        completed_zims = list(checkpoint["completed_zims"])
+        total_articles = checkpoint["article_count"]
+        total_chunks = checkpoint["chunk_count"]
+        logger.info(
+            "Reprise multi-ZIM : %d/%d ZIM complétés, %d articles, %d chunks",
+            len(completed_zims), len(zim_names), total_articles, total_chunks,
+        )
+        # Rebuild seen_titles from completed ZIMs
+        for zim_path in zim_paths:
+            if zim_path.name in completed_zims:
+                logger.info("Collecte des titres depuis %s (déjà indexé)...", zim_path.name)
+                seen_titles |= _collect_titles(zim_path)
+                is_first_zim = False
+    else:
+        # Fresh start: delete the collection
+        cfg = config.load_config()
+        vectordb_path = db_path or cfg["vectordb"]["path"]
+        import chromadb
+        client = chromadb.PersistentClient(path=vectordb_path)
+        try:
+            client.delete_collection(collection_name)
+            logger.info("Collection '%s' supprimée pour indexation multi-ZIM", collection_name)
+        except (ValueError, chromadb.errors.NotFoundError):
+            pass
+
+    for zim_path in zim_paths:
+        if zim_path.name in completed_zims:
+            continue
+
+        logger.info(
+            "=== Indexation de %s (%d/%d) — %d titres à ignorer ===",
+            zim_path.name,
+            len(completed_zims) + 1, len(zim_names),
+            len(seen_titles),
+        )
+
+        _save_multi_checkpoint(
+            collection_name, zim_names, completed_zims,
+            zim_path.name, 0, total_articles, total_chunks,
+        )
+
+        stats = index_zim(
+            zim_path,
+            collection_name,
+            db_path,
+            skip_titles=seen_titles if seen_titles else None,
+            append=not is_first_zim,
+        )
+
+        total_articles += stats["article_count"]
+        total_chunks += stats["chunk_count"]
+        seen_titles |= stats.get("indexed_titles", set())
+        completed_zims.append(zim_path.name)
+        is_first_zim = False
+
+        _save_multi_checkpoint(
+            collection_name, zim_names, completed_zims,
+            None, 0, total_articles, total_chunks,
+        )
+
+        logger.info(
+            "ZIM %s terminé — total cumulé : %d articles, %d chunks",
+            zim_path.name, total_articles, total_chunks,
+        )
+
+    # Archive multi checkpoint
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for cp in (MULTI_CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE.with_suffix(".tmp")):
+        if cp.exists():
+            done_name = f"indexing_checkpoint_done_at_{timestamp}{cp.suffix}"
+            dest = cp.parent / done_name
+            cp.rename(dest)
+
+    logger.info(
+        "Indexation multi-ZIM terminée : %d ZIM, %d articles, %d chunks",
+        len(zim_paths), total_articles, total_chunks,
+    )
+    return {"article_count": total_articles, "chunk_count": total_chunks}

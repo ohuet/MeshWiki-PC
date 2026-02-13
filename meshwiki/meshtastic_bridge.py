@@ -112,7 +112,7 @@ class MeshtasticBridge:
                 eta_str = f"environ {remaining_min // 60}h{remaining_min % 60:02d}"
             else:
                 eta_str = f"environ {remaining_min}min"
-            if kiwix_search.get_zim_path() is not None:
+            if kiwix_search.has_zim_paths():
                 answer = rag.query_with_kiwix_context(question, eta_str)
             else:
                 answer = rag.query_without_context(question, eta_str)
@@ -122,7 +122,7 @@ class MeshtasticBridge:
 
         # Check if index is available
         if not rag.is_available():
-            if kiwix_search.get_zim_path() is not None:
+            if kiwix_search.has_zim_paths():
                 answer = rag.query_with_kiwix_context_permanent(question)
             else:
                 answer = rag.query_without_data(question)

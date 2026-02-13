@@ -11,9 +11,10 @@ import requests
 from bs4 import BeautifulSoup
 
 from meshwiki import config, collection_state
-from meshwiki.wikipedia_indexer import index_zim
+from meshwiki.wikipedia_indexer import index_zim, index_all_zims
 from meshwiki.rag import reset_collection
 from meshwiki import kiwix_search
+from meshwiki.zim_discovery import discover_zims
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +148,11 @@ class WikipediaUpdater:
         """Build a new index and safely swap it with the active one.
 
         Strategy:
-        1. Index into a fresh ChromaDB database (alternating chroma_a / chroma_b)
-        2. Validate article_count > 0
-        3. Write pointer file to switch active database (instant)
-        4. Delete old database directory in background (shutil.rmtree)
+        1. Discover all ZIM files (multi-ZIM support)
+        2. Index into a fresh ChromaDB database (alternating chroma_a / chroma_b)
+        3. Validate article_count > 0
+        4. Write pointer file to switch active database (instant)
+        5. Delete old database directory in background (shutil.rmtree)
         On failure: pointer untouched, old index stays intact.
 
         Returns True on success, False on failure.
@@ -158,11 +160,17 @@ class WikipediaUpdater:
         target_db_path = collection_state.get_inactive_db_path()
         target_slot = collection_state.get_inactive_slot()
 
-        kiwix_search.set_zim_path(zim_path)
+        # Refresh ZIM paths so Kiwix fallback is immediately active
+        zim_paths = discover_zims()
+        kiwix_search.set_zim_paths(zim_paths)
+
         try:
-            # Step 1: Index into a fresh database
-            logger.info("Indexing into database '%s'...", target_db_path)
-            stats = index_zim(zim_path, db_path=target_db_path)
+            # Step 1: Index all ZIM files into a fresh database
+            logger.info("Indexing %d ZIM file(s) into database '%s'...", len(zim_paths), target_db_path)
+            if len(zim_paths) > 1:
+                stats = index_all_zims(zim_paths, db_path=target_db_path)
+            else:
+                stats = index_zim(zim_path, db_path=target_db_path)
 
             if stats["article_count"] == 0:
                 logger.error("Indexation produced 0 articles, aborting")
@@ -208,8 +216,6 @@ class WikipediaUpdater:
             # The database and checkpoint stay in sync for safe resume.
             logger.error("Reindexation failed: %s", e)
             return False
-        finally:
-            kiwix_search.set_zim_path(None)
 
     def cleanup(self) -> None:
         """Remove temporary download files (but keep the .zim as fallback)."""

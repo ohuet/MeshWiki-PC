@@ -7,9 +7,8 @@ import meshwiki.kiwix_search as ks
 
 def setup_function():
     """Reset module state before each test."""
-    ks.set_zim_path(None)
-    ks._archive = None
-    ks._archive_path = None
+    ks.set_zim_paths([])
+    ks._archives.clear()
     ks.set_disabled(False)
 
 
@@ -80,15 +79,13 @@ def _make_mock_entry(title: str, html: str) -> MagicMock:
     return mock_entry
 
 
-@patch("meshwiki.kiwix_search._get_archive")
-def test_search_returns_results(mock_get_archive):
+@patch("meshwiki.kiwix_search._get_archives")
+def test_search_returns_results(mock_get_archives):
     """Search with mocked Archive returns expected results."""
-    ks.set_zim_path("/tmp/test.zim")
-
     mock_entry = _make_mock_entry("Paris", "<p>Paris est la capitale de la France.</p>")
     mock_archive = MagicMock()
     mock_archive.get_entry_by_path.return_value = mock_entry
-    mock_get_archive.return_value = mock_archive
+    mock_get_archives.return_value = [("/tmp/test.zim", mock_archive)]
 
     # Mock suggestion search returning the result
     mock_suggestion = MagicMock()
@@ -120,18 +117,16 @@ def test_search_returns_results(mock_get_archive):
     assert "Paris est la capitale de la France" in results[0]["content"]
 
 
-@patch("meshwiki.kiwix_search._get_archive")
-def test_search_combines_suggestion_and_fulltext(mock_get_archive):
+@patch("meshwiki.kiwix_search._get_archives")
+def test_search_combines_suggestion_and_fulltext(mock_get_archives):
     """Search combines results from suggestion and full-text, deduplicating."""
-    ks.set_zim_path("/tmp/test.zim")
-
     entries = {
         "A/Piton": _make_mock_entry("Piton des Neiges", "<p>Le piton des Neiges culmine à 3070 m.</p>"),
         "A/Reunion": _make_mock_entry("La Réunion", "<p>La Réunion est une île de l'océan Indien.</p>"),
     }
     mock_archive = MagicMock()
     mock_archive.get_entry_by_path.side_effect = lambda p: entries[p]
-    mock_get_archive.return_value = mock_archive
+    mock_get_archives.return_value = [("/tmp/test.zim", mock_archive)]
 
     # Suggestion returns "Piton"
     mock_suggestion = MagicMock()
@@ -163,16 +158,14 @@ def test_search_combines_suggestion_and_fulltext(mock_get_archive):
     assert results[1]["title"] == "La Réunion"
 
 
-@patch("meshwiki.kiwix_search._get_archive")
-def test_search_truncates_long_content(mock_get_archive):
+@patch("meshwiki.kiwix_search._get_archives")
+def test_search_truncates_long_content(mock_get_archives):
     """Content longer than max_chars_per_result is truncated."""
-    ks.set_zim_path("/tmp/test.zim")
-
     long_text = "mot " * 200  # ~800 chars
     mock_entry = _make_mock_entry("Long Article", f"<p>{long_text}</p>")
     mock_archive = MagicMock()
     mock_archive.get_entry_by_path.return_value = mock_entry
-    mock_get_archive.return_value = mock_archive
+    mock_get_archives.return_value = [("/tmp/test.zim", mock_archive)]
 
     mock_suggestion = MagicMock()
     mock_suggestion.getResults.return_value = ["A/Long"]

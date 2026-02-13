@@ -264,7 +264,7 @@ def test_indexing_in_progress_calls_llm_fallback(mock_eta, mock_rag, mock_kiwix,
     """When indexation is running and no ZIM available, calls query_without_context."""
     eta = datetime.now(timezone.utc) + timedelta(hours=1, minutes=30)
     mock_eta.return_value = eta
-    mock_kiwix.get_zim_path.return_value = None
+    mock_kiwix.has_zim_paths.return_value = False
     mock_rag.query_without_context.return_value = "Réponse sans Wikipedia"
 
     limiter = RateLimiter()
@@ -294,7 +294,7 @@ def test_indexing_with_zim_uses_kiwix_fallback(mock_eta, mock_rag, mock_kiwix, m
     """When indexation is running and ZIM is available, calls query_with_kiwix_context."""
     eta = datetime.now(timezone.utc) + timedelta(hours=1, minutes=30)
     mock_eta.return_value = eta
-    mock_kiwix.get_zim_path.return_value = "/tmp/wikipedia.zim"
+    mock_kiwix.has_zim_paths.return_value = True
     mock_rag.query_with_kiwix_context.return_value = "Réponse Kiwix"
 
     limiter = RateLimiter()
@@ -342,7 +342,7 @@ def test_no_indexing_processes_normally(mock_rag, mock_eta, mock_config):
 def test_no_index_with_kiwix_uses_fallback(mock_eta, mock_rag, mock_kiwix, mock_config):
     """When no index exists but ZIM is available, uses permanent Kiwix fallback."""
     mock_rag.is_available.return_value = False
-    mock_kiwix.get_zim_path.return_value = "/tmp/wikipedia.zim"
+    mock_kiwix.has_zim_paths.return_value = True
     mock_rag.query_with_kiwix_context_permanent.return_value = "Réponse Kiwix permanente"
 
     limiter = RateLimiter()
@@ -368,7 +368,7 @@ def test_no_index_with_kiwix_uses_fallback(mock_eta, mock_rag, mock_kiwix, mock_
 def test_no_index_no_kiwix_calls_llm_without_data(mock_eta, mock_rag, mock_kiwix, mock_config):
     """When neither index nor ZIM exists, calls LLM with general knowledge."""
     mock_rag.is_available.return_value = False
-    mock_kiwix.get_zim_path.return_value = None
+    mock_kiwix.has_zim_paths.return_value = False
     mock_rag.query_without_data.return_value = "Paris est la capitale. [Sans source Wikipedia]"
 
     limiter = RateLimiter()
