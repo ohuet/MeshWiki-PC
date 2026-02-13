@@ -20,10 +20,9 @@ Tes réponses doivent être :
 IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
-La base Wikipedia est en cours d'initialisation (temps restant : {eta}).
+La base Wikipedia est en cours d'initialisation.
 Tu ne disposes PAS d'extraits Wikipedia pour le moment.
 Réponds du mieux possible avec tes connaissances générales.
-Termine ta réponse par : "[Sans source Wikipedia — base disponible dans {eta}]"
 Ta réponse doit faire une ou deux phrases, max 400 caractères (transmission radio)."""
 
 SYSTEM_PROMPT_KIWIX = """Tu es un assistant encyclopédique offline.
@@ -32,13 +31,11 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances.
-Termine ta réponse par : "[Recherche Kiwix — base optimisée dans {eta}]" """
+IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_DATA = """Tu es un assistant encyclopédique sur l'île de La Réunion.
 Tu ne disposes PAS d'extraits Wikipedia pour le moment.
 Réponds du mieux possible avec tes connaissances générales.
-Termine ta réponse par : "[Sans source Wikipedia]"
 Ta réponse doit faire une ou deux phrases, max 400 caractères (transmission radio)."""
 
 SYSTEM_PROMPT_KIWIX_PERMANENT = """Tu es un assistant encyclopédique offline.
@@ -47,8 +44,11 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances.
-Termine ta réponse par : "[Recherche textuelle Kiwix]" """
+IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
+
+SYSTEM_PROMPT_LLM_OPINION = """Tu es un assistant encyclopédique. L'information n'a PAS été trouvée dans la base Wikipedia locale.
+Réponds avec tes connaissances générales.
+Ta réponse doit être concise (max 400 caractères, transmission radio)."""
 
 _model = None
 _collection = None
@@ -162,26 +162,31 @@ Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis 
 
 def query_without_context(question: str, eta_str: str) -> str:
     """Answer a question without Wikipedia context (during indexation)."""
-    system = SYSTEM_PROMPT_NO_INDEX.format(eta=eta_str)
+    system = SYSTEM_PROMPT_NO_INDEX
     user_prompt = f"Question : {question}\n\nRéponds de façon concise."
-    return llm.generate(system, user_prompt)
+    response = llm.generate(system, user_prompt)
+    return f"{response} [Sans source Wikipedia — base disponible dans {eta_str}]"
 
 
-def query_with_kiwix_context(question: str, eta_str: str) -> str:
-    """Answer a question using Kiwix full-text search as context (during indexation).
+def _is_no_answer(response: str) -> bool:
+    """Detect if the LLM response indicates the information was not found."""
+    lower = response.lower()
+    return "je n'ai pas trouvé" in lower or "je ne sais pas" in lower
 
-    Falls back to query_without_context() if Kiwix returns no results.
+
+def _kiwix_cascade(question: str, system_prompt: str, suffix: str) -> str | None:
+    """Cascade Kiwix search: long extracts → full articles → LLM opinion.
+
+    Returns the LLM answer with appropriate suffix/prefix, or None if
+    Kiwix returned no results at all.
     """
-    results = kiwix_search.search(question)
+    results = kiwix_search.search(question, max_chars_per_result=4000)
     if not results:
-        return query_without_context(question, eta_str)
+        return None
 
-    context_parts = []
-    for r in results:
-        context_parts.append(f"[{r['title']}] {r['content']}")
+    # Step 1: Try with long extracts
+    context_parts = [f"[{r['title']}] {r['content']}" for r in results]
     context = "\n\n".join(context_parts)
-
-    system = SYSTEM_PROMPT_KIWIX.format(eta=eta_str)
     user_prompt = f"""Extraits Wikipedia pertinents :
 ---
 {context}
@@ -191,7 +196,46 @@ Question : {question}
 
 Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
 
-    return llm.generate(system, user_prompt)
+    response = llm.generate(system_prompt, user_prompt)
+    if not _is_no_answer(response):
+        return f"{response} {suffix}"
+
+    # Steps 2-4: Try each full article individually
+    for r in results:
+        full_content = kiwix_search.get_article_content(r["title"])
+        if not full_content:
+            continue
+        context = f"[{r['title']}] {full_content}"
+        user_prompt = f"""Extraits Wikipedia pertinents :
+---
+{context}
+---
+
+Question : {question}
+
+Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+
+        response = llm.generate(system_prompt, user_prompt)
+        if not _is_no_answer(response):
+            return f"{response} {suffix}"
+
+    # Step 5: LLM opinion with general knowledge
+    user_prompt = f"Question : {question}\n\nRéponds de façon concise."
+    response = llm.generate(SYSTEM_PROMPT_LLM_OPINION, user_prompt)
+    return f"Réponse non trouvée dans la base. Mon avis : {response}"
+
+
+def query_with_kiwix_context(question: str, eta_str: str) -> str:
+    """Answer a question using Kiwix full-text search as context (during indexation).
+
+    Uses cascade strategy: long extracts → full articles → LLM opinion.
+    Falls back to query_without_context() if Kiwix returns no results.
+    """
+    suffix = f"[Recherche Kiwix — base optimisée dans {eta_str}]"
+    result = _kiwix_cascade(question, SYSTEM_PROMPT_KIWIX, suffix)
+    if result is None:
+        return query_without_context(question, eta_str)
+    return result
 
 
 def set_force_unavailable(value: bool) -> None:
@@ -233,28 +277,14 @@ def is_available() -> bool:
 def query_with_kiwix_context_permanent(question: str) -> str:
     """Answer a question using Kiwix full-text search as permanent fallback (no ETA).
 
+    Uses cascade strategy: long extracts → full articles → LLM opinion.
     Used when no ChromaDB index exists and no indexation is in progress.
     Returns a simple message if Kiwix returns no results.
     """
-    results = kiwix_search.search(question)
-    if not results:
+    result = _kiwix_cascade(question, SYSTEM_PROMPT_KIWIX_PERMANENT, "[Recherche textuelle Kiwix]")
+    if result is None:
         return "Aucun résultat trouvé pour cette question."
-
-    context_parts = []
-    for r in results:
-        context_parts.append(f"[{r['title']}] {r['content']}")
-    context = "\n\n".join(context_parts)
-
-    user_prompt = f"""Extraits Wikipedia pertinents :
----
-{context}
----
-
-Question : {question}
-
-Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
-
-    return llm.generate(SYSTEM_PROMPT_KIWIX_PERMANENT, user_prompt)
+    return result
 
 
 def query_without_data(question: str) -> str:
@@ -263,4 +293,5 @@ def query_without_data(question: str) -> str:
     Used when neither the ChromaDB index nor a ZIM file are available.
     """
     user_prompt = f"Question : {question}\n\nRéponds de façon concise."
-    return llm.generate(SYSTEM_PROMPT_NO_DATA, user_prompt)
+    response = llm.generate(SYSTEM_PROMPT_NO_DATA, user_prompt)
+    return f"{response} [Sans source Wikipedia]"

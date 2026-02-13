@@ -206,6 +206,45 @@ def _search_single_archive(
     return output
 
 
+def get_article_content(title: str, max_chars: int = 0) -> str | None:
+    """Read the full content of an article by exact title from ZIM archives.
+
+    Args:
+        title: Exact article title to look up.
+        max_chars: If > 0, truncate the result to this many characters.
+
+    Returns:
+        Cleaned article text, or None if not found.
+    """
+    archives = _get_archives()
+    if not archives:
+        return None
+
+    for _path, archive in archives:
+        try:
+            from libzim.suggestion import SuggestionSearcher
+
+            searcher = SuggestionSearcher(archive)
+            suggestion = searcher.suggest(title)
+            for path in suggestion.getResults(0, 5):
+                entry = archive.get_entry_by_path(path)
+                if entry.title == title:
+                    item = entry.get_item()
+                    raw_html = bytes(item.content).decode("utf-8", errors="ignore")
+                    text = _clean_html(raw_html)
+                    if max_chars > 0 and len(text) > max_chars:
+                        truncated = text[:max_chars]
+                        last_space = truncated.rfind(" ")
+                        if last_space > max_chars // 2:
+                            truncated = truncated[:last_space]
+                        text = truncated + "..."
+                    return text
+        except Exception as e:
+            logger.debug("get_article_content failed for %r in %s: %s", title, _path, e)
+
+    return None
+
+
 def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) -> list[dict]:
     """Search all ZIM files for articles matching the query.
 

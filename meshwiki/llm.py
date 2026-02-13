@@ -33,14 +33,14 @@ def generate(system_prompt: str, user_prompt: str) -> str:
     logger.info("LLM prompt: %s", user_prompt)
 
     try:
-        response = requests.post(url, json=payload, timeout=120)
+        response = requests.post(url, json=payload, timeout=300)
         response.raise_for_status()
         data = response.json()
         answer = data.get("response", "").strip()
         logger.info("LLM response: %s", answer)
         return answer
     except requests.exceptions.Timeout:
-        logger.error("Ollama timeout after 120s")
+        logger.error("Ollama timeout after 300s")
         return "Erreur : le modèle LLM n'a pas répondu à temps."
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to Ollama at %s", ollama["base_url"])

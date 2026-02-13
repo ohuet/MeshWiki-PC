@@ -187,3 +187,91 @@ def test_search_no_archives_returns_empty(mock_get_archives):
     """When no archives are available, search returns empty list."""
     mock_get_archives.return_value = []
     assert ks.search("test") == []
+
+
+@patch("meshwiki.kiwix_search._get_archives")
+def test_get_article_content_exact_match(mock_get_archives):
+    """get_article_content returns cleaned text for an exact title match."""
+    entry = _make_mock_entry(
+        "Piton des Neiges",
+        "<p>Le Piton des Neiges culmine à 3 070 mètres.</p>",
+    )
+    archive = MagicMock()
+    archive.get_entry_by_path.return_value = entry
+
+    mock_get_archives.return_value = [("/test.zim", archive)]
+
+    mock_sugg = MagicMock()
+    mock_sugg.getResults.return_value = ["A/Piton_des_Neiges"]
+    mock_searcher = MagicMock()
+    mock_searcher.suggest.return_value = mock_sugg
+
+    with patch.dict("sys.modules", {
+        "libzim.suggestion": MagicMock(
+            SuggestionSearcher=MagicMock(return_value=mock_searcher),
+        ),
+    }):
+        result = ks.get_article_content("Piton des Neiges")
+
+    assert result is not None
+    assert "3 070" in result
+    assert "<p>" not in result  # HTML cleaned
+
+
+@patch("meshwiki.kiwix_search._get_archives")
+def test_get_article_content_not_found(mock_get_archives):
+    """get_article_content returns None for a title that doesn't exist."""
+    # Archive where suggestion returns no matching titles
+    entry = _make_mock_entry("Autre Article", "<p>Contenu</p>")
+    archive = MagicMock()
+    archive.get_entry_by_path.return_value = entry
+
+    mock_get_archives.return_value = [("/test.zim", archive)]
+
+    mock_sugg = MagicMock()
+    mock_sugg.getResults.return_value = ["A/Autre"]
+    mock_searcher = MagicMock()
+    mock_searcher.suggest.return_value = mock_sugg
+
+    with patch.dict("sys.modules", {
+        "libzim.suggestion": MagicMock(
+            SuggestionSearcher=MagicMock(return_value=mock_searcher),
+        ),
+    }):
+        result = ks.get_article_content("Piton des Neiges")
+
+    assert result is None
+
+
+@patch("meshwiki.kiwix_search._get_archives")
+def test_get_article_content_no_archives(mock_get_archives):
+    """get_article_content returns None when no archives are available."""
+    mock_get_archives.return_value = []
+    assert ks.get_article_content("Test") is None
+
+
+@patch("meshwiki.kiwix_search._get_archives")
+def test_get_article_content_with_max_chars(mock_get_archives):
+    """get_article_content truncates content when max_chars is set."""
+    long_text = "Le Piton des Neiges est un volcan. " * 50
+    entry = _make_mock_entry("Piton des Neiges", f"<p>{long_text}</p>")
+    archive = MagicMock()
+    archive.get_entry_by_path.return_value = entry
+
+    mock_get_archives.return_value = [("/test.zim", archive)]
+
+    mock_sugg = MagicMock()
+    mock_sugg.getResults.return_value = ["A/Piton_des_Neiges"]
+    mock_searcher = MagicMock()
+    mock_searcher.suggest.return_value = mock_sugg
+
+    with patch.dict("sys.modules", {
+        "libzim.suggestion": MagicMock(
+            SuggestionSearcher=MagicMock(return_value=mock_searcher),
+        ),
+    }):
+        result = ks.get_article_content("Piton des Neiges", max_chars=100)
+
+    assert result is not None
+    assert result.endswith("...")
+    assert len(result) <= 104  # 100 + "..."
