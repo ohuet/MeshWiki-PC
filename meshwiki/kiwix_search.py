@@ -151,21 +151,32 @@ def _search_single_archive(
     output: list[dict] = []
     seen_paths: set[str] = set()
 
-    # 1. Title/suggestion search
+    # 1. Title/suggestion search — progressively drop leading keywords
+    #    if no results (e.g. "hauteur piton neiges" → "piton neiges")
     try:
         from libzim.suggestion import SuggestionSearcher
 
         suggestion_searcher = SuggestionSearcher(archive)
-        suggestion = suggestion_searcher.suggest(keywords)
-        for path in suggestion.getResults(0, num_results):
-            if path in seen_paths:
-                continue
-            seen_paths.add(path)
-            result = _read_entry(archive, path, max_chars)
-            if result and result["title"] not in seen_titles:
-                seen_titles.add(result["title"])
-                output.append(result)
-                logger.debug("Kiwix suggestion hit: %s", result["title"])
+        words = keywords.split()
+        for start in range(len(words)):
+            sub_keywords = " ".join(words[start:])
+            if not sub_keywords:
+                break
+            suggestion = suggestion_searcher.suggest(sub_keywords)
+            paths = list(suggestion.getResults(0, num_results))
+            if paths:
+                if start > 0:
+                    logger.debug("Kiwix suggestion: %r failed, %r matched", keywords, sub_keywords)
+                for path in paths:
+                    if path in seen_paths:
+                        continue
+                    seen_paths.add(path)
+                    result = _read_entry(archive, path, max_chars)
+                    if result and result["title"] not in seen_titles:
+                        seen_titles.add(result["title"])
+                        output.append(result)
+                        logger.debug("Kiwix suggestion hit: %s", result["title"])
+                break  # Found results, stop trying
     except Exception as e:
         logger.debug("Kiwix suggestion search failed: %s", e)
 
@@ -198,9 +209,10 @@ def _search_single_archive(
 def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) -> list[dict]:
     """Search all ZIM files for articles matching the query.
 
-    Iterates over ZIM files in priority order (smallest first).
-    Results from higher-priority ZIMs take precedence: titles already
-    found are not duplicated from lower-priority ZIMs.
+    Always searches ALL ZIMs so that a fallback ZIM can contribute articles
+    that the priority ZIM doesn't have. Deduplication by title ensures that
+    when both ZIMs have the same article, the priority ZIM's version wins.
+    The final result list is capped at num_results.
 
     Returns a list of {"title": str, "content": str} dicts.
     Returns an empty list if no ZIM is available or search fails.
@@ -217,15 +229,15 @@ def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) ->
     seen_titles: set[str] = set()
     output: list[dict] = []
 
+    # Search ALL ZIMs — each contributes up to num_results, dedup by title
     for path, archive in archives:
-        remaining = num_results - len(output)
-        if remaining <= 0:
-            break
-
         results = _search_single_archive(
-            archive, keywords, remaining, max_chars_per_result, seen_titles,
+            archive, keywords, num_results, max_chars_per_result, seen_titles,
         )
         output.extend(results)
+
+    # Cap at num_results (priority ZIM results come first in the list)
+    output = output[:num_results]
 
     if not output:
         logger.info("Kiwix search: no results for %r (keywords: %r)", query, keywords)

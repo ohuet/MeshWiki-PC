@@ -131,23 +131,33 @@ def test_multi_zim_priority_dedup(mock_get_archives):
 
 
 @patch("meshwiki.kiwix_search._get_archives")
-def test_multi_zim_stops_when_enough(mock_get_archives):
-    """Search stops iterating ZIMs once num_results is reached."""
-    entries = {
+def test_multi_zim_caps_at_num_results(mock_get_archives):
+    """Results from all ZIMs are combined but capped at num_results."""
+    entries1 = {
         "A/A": _make_mock_entry("Article A", "<p>Content A</p>"),
         "A/B": _make_mock_entry("Article B", "<p>Content B</p>"),
     }
-    archive = _make_mock_archive(entries)
+    archive1 = _make_mock_archive(entries1)
+
+    entries2 = {
+        "A/C": _make_mock_entry("Article C", "<p>Content C</p>"),
+    }
+    archive2 = _make_mock_archive(entries2)
 
     mock_get_archives.return_value = [
-        ("/small.zim", archive),
-        ("/large.zim", MagicMock()),  # Should never be searched
+        ("/small.zim", archive1),
+        ("/large.zim", archive2),
     ]
 
-    mock_sugg = MagicMock()
-    mock_sugg.getResults.return_value = ["A/A", "A/B"]
-    mock_sugg_searcher = MagicMock()
-    mock_sugg_searcher.suggest.return_value = mock_sugg
+    call_count = [0]
+    def make_sugg_searcher(archive):
+        sugg = MagicMock()
+        if call_count[0] == 0:
+            sugg.suggest.return_value = MagicMock(getResults=MagicMock(return_value=["A/A", "A/B"]))
+        else:
+            sugg.suggest.return_value = MagicMock(getResults=MagicMock(return_value=["A/C"]))
+        call_count[0] += 1
+        return sugg
 
     mock_ft = MagicMock()
     mock_ft.search.return_value = MagicMock(getResults=MagicMock(return_value=[]))
@@ -156,16 +166,20 @@ def test_multi_zim_stops_when_enough(mock_get_archives):
 
     with patch.dict("sys.modules", {
         "libzim.suggestion": MagicMock(
-            SuggestionSearcher=MagicMock(return_value=mock_sugg_searcher),
+            SuggestionSearcher=MagicMock(side_effect=make_sugg_searcher),
         ),
         "libzim.search": MagicMock(
             Query=MagicMock(return_value=mock_query),
             Searcher=MagicMock(return_value=mock_ft),
         ),
     }):
+        # 3 total results available, but cap at 2
         results = ks.search("test", num_results=2)
 
     assert len(results) == 2
+    # Priority ZIM results come first
+    assert results[0]["title"] == "Article A"
+    assert results[1]["title"] == "Article B"
 
 
 @patch("meshwiki.kiwix_search._get_archives")
