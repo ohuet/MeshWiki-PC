@@ -119,8 +119,15 @@ def _clean_html(raw_html: str) -> str:
     text = re.sub(r"\[\s*\d+\s*\]", "", text)
     # Remove Wikidata/interlanguage markers like ( d ) or ( en )
     text = re.sub(r"\(\s*(?:d|en)\s*\)", "", text)
+    # Normalize whitespace before text-level filters
+    text = re.sub(r"\s+", " ", text).strip()
     # Remove leftover edit link text
-    text = re.sub(r"modifier - modifier le code - voir Wikidata \( aide \)", "", text)
+    text = re.sub(r"modifier - modifier le code - voir Wikidata\s*\(?\s*aide\s*\)?", "", text)
+    # Remove "Mise en garde médicale" text (fallback if HTML filter missed it)
+    text = re.sub(r"Mise en garde médicale", "", text)
+    # Remove hatnote text at the start ("Pour ..., voir ...")
+    text = re.sub(r"^Pour (?:le |la |les |l['']).+?, voir .+?\.\s*", "", text)
+    # Final whitespace cleanup
     text = re.sub(r"\s+", " ", text).strip()
     return text
 

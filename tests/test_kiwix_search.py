@@ -157,13 +157,48 @@ def test_clean_html_removes_wikidata_markers():
 
 
 def test_clean_html_removes_wikidata_edit_text():
-    """Leftover 'modifier - modifier le code - voir Wikidata (aide)' text is removed."""
+    """Leftover 'modifier - modifier le code - voir Wikidata' text is removed."""
+    # With spaces: ( aide )
     html = "<p>Titre modifier - modifier le code - voir Wikidata ( aide ) Suite du texte.</p>"
     result = ks._clean_html(html)
     assert "modifier" not in result
     assert "Wikidata" not in result
     assert "Titre" in result
     assert "Suite du texte" in result
+    # Without spaces: (aide)
+    html2 = "<p>Titre modifier - modifier le code - voir Wikidata (aide) Suite.</p>"
+    result2 = ks._clean_html(html2)
+    assert "modifier" not in result2
+    assert "Wikidata" not in result2
+
+
+def test_clean_html_removes_mise_en_garde_text():
+    """'Mise en garde médicale' text is removed even if HTML filter missed it."""
+    html = "<p>Mise en garde médicale La dengue est une maladie.</p>"
+    result = ks._clean_html(html)
+    assert "Mise en garde" not in result
+    assert "dengue est une maladie" in result
+
+
+def test_clean_html_removes_hatnote_text_fallback():
+    """Hatnote text at the start is removed even without HTML class."""
+    # Pattern: "Pour le/la/les/l' ... voir ..."
+    html = "<p>Pour le groupe rock qui porte ce nom, voir Dengue Fever. La dengue est une maladie.</p>"
+    result = ks._clean_html(html)
+    assert "groupe rock" not in result
+    assert "Dengue Fever" not in result
+    assert "dengue est une maladie" in result
+
+    # "Pour l'article..." variant
+    html2 = "<p>Pour l'article principal, voir France. La France est un pays.</p>"
+    result2 = ks._clean_html(html2)
+    assert "article principal" not in result2
+    assert "France est un pays" in result2
+
+    # Does NOT remove "Pour" in the middle of text
+    html3 = "<p>Ceci est un texte. Pour le moment, rien à voir ici.</p>"
+    result3 = ks._clean_html(html3)
+    assert "Pour le moment" in result3
 
 
 def test_clean_html_decodes_entities():
