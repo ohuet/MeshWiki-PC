@@ -268,7 +268,7 @@ def get_article_content(title: str, max_chars: int = 0) -> str | None:
     return None
 
 
-def search(query: str, num_results: int = 3, max_chars_per_result: int = 500) -> list[dict]:
+def search(query: str, num_results: int = 5, max_chars_per_result: int = 500) -> list[dict]:
     """Search all ZIM files for articles matching the query.
 
     Always searches ALL ZIMs so that a fallback ZIM can contribute articles
