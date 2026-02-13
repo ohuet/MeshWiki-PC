@@ -24,7 +24,7 @@ def discover_zims(data_dir: str = "data") -> list[Path]:
     zim_files.sort(key=lambda p: p.stat().st_size)
 
     if zim_files:
-        logger.info(
+        logger.debug(
             "ZIM découverts (%d) : %s",
             len(zim_files),
             ", ".join(f"{p.name} ({p.stat().st_size / 1e6:.1f} Mo)" for p in zim_files),
