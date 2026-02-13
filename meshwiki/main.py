@@ -205,6 +205,34 @@ def _run_background_update(config: dict) -> None:
     thread.start()
 
 
+def _run_background_reindex(config: dict) -> None:
+    """Force a full reindex in a background thread (skips download check)."""
+    from meshwiki.zim_discovery import discover_zims
+
+    def _reindex():
+        try:
+            import os
+            if hasattr(os, "nice"):
+                os.nice(10)
+        except OSError:
+            pass
+
+        zim_paths = discover_zims()
+        if not zim_paths:
+            logger.error("Aucun fichier ZIM trouvé pour la réindexation")
+            return
+
+        updater = WikipediaUpdater()
+        success = updater.reindex(zim_paths[0])
+        if success:
+            logger.info("Réindexation complète terminée avec succès")
+        else:
+            logger.error("Échec de la réindexation")
+
+    thread = threading.Thread(target=_reindex, name="wikipedia-reindex", daemon=True)
+    thread.start()
+
+
 def _start_update_scheduler(config: dict) -> threading.Event:
     """Start a periodic download scheduler in a background thread.
 
@@ -321,8 +349,10 @@ def main() -> None:
                 if answer not in ("o", "oui", "y", "yes"):
                     logger.info("Réindexation annulée par l'utilisateur")
                 else:
-                    logger.info("Mise à jour + indexation demandée, lancement en arrière-plan...")
-                    _run_background_update(cfg)
+                    from meshwiki import wikipedia_indexer
+                    wikipedia_indexer.clear_checkpoints()
+                    logger.info("Réindexation forcée, lancement en arrière-plan...")
+                    _run_background_reindex(cfg)
             else:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
                 _run_background_download(cfg)

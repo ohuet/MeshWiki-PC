@@ -23,7 +23,17 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_FILE = Path("data/indexing_checkpoint.json")
 
 _indexing_eta: datetime | None = None
+_force_fresh = False
 _indexing_lock = threading.Lock()
+
+
+def clear_checkpoints() -> None:
+    """Delete all indexing checkpoint files to force a fresh reindexation."""
+    for suffix in (".json", ".tmp"):
+        path = CHECKPOINT_FILE.with_suffix(suffix)
+        if path.exists():
+            path.unlink()
+            logger.info("Checkpoint supprimé : %s", path)
 
 
 def get_indexing_eta() -> datetime | None:
