@@ -103,8 +103,24 @@ def _clean_html(raw_html: str) -> str:
     """Extract plain text from HTML, removing tags, entities, and extra whitespace."""
     text = re.sub(r"<script[^>]*>.*?</script>", " ", raw_html, flags=re.DOTALL)
     text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL)
+    # Remove Wikipedia disambiguation/hatnote banners ("Pour les articles homonymes...")
+    text = re.sub(r'<div[^>]*class="[^"]*(?:hatnote|dablink|homonymie)[^"]*"[^>]*>.*?</div>', " ", text, flags=re.DOTALL)
+    # Remove warning banners ("Mise en garde médicale", etc.)
+    text = re.sub(r'<div[^>]*class="[^"]*bandeau-container[^"]*"[^>]*>.*?</div>', " ", text, flags=re.DOTALL)
+    # Remove navboxes (navigation boxes at the bottom of articles)
+    text = re.sub(r'<div[^>]*class="[^"]*navbox[^"]*"[^>]*>.*?</div>', " ", text, flags=re.DOTALL)
+    # Remove "Classification et ressources externes" section in infoboxes
+    text = re.sub(r'Classification et ressources externes.*?(?=</table>|</tbody>)', " ", text, flags=re.DOTALL)
+    # Remove edit links ("modifier - modifier le code - voir Wikidata")
+    text = re.sub(r'<span[^>]*class="[^"]*mw-editsection[^"]*"[^>]*>.*?</span>', " ", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html_lib.unescape(text)
+    # Remove Wikipedia reference markers like [1], [ 2 ], etc.
+    text = re.sub(r"\[\s*\d+\s*\]", "", text)
+    # Remove Wikidata/interlanguage markers like ( d ) or ( en )
+    text = re.sub(r"\(\s*(?:d|en)\s*\)", "", text)
+    # Remove leftover edit link text
+    text = re.sub(r"modifier - modifier le code - voir Wikidata \( aide \)", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 

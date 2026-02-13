@@ -43,11 +43,142 @@ def test_clean_html_strips_tags():
     assert ks._clean_html("Plain text") == "Plain text"
 
 
+def test_clean_html_removes_hatnote():
+    """Hatnote/disambiguation banners are removed from cleaned text."""
+    html = (
+        '<div class="hatnote navigation-not-searchable">'
+        'Pour le groupe rock, voir <a href="/Dengue_Fever">Dengue Fever</a>.'
+        '</div>'
+        '<p>La dengue est une maladie tropicale.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "groupe rock" not in result
+    assert "Dengue Fever" not in result
+    assert "dengue est une maladie tropicale" in result
+
+
+def test_clean_html_removes_dablink():
+    """Dablink disambiguation banners are removed."""
+    html = (
+        '<div class="dablink">'
+        'Pour les articles homonymes, voir <a href="/Test">Test (homonymie)</a>.'
+        '</div>'
+        '<p>Contenu principal.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "homonymes" not in result
+    assert "Contenu principal" in result
+
+
+def test_clean_html_removes_homonymie():
+    """Homonymie banners are removed."""
+    html = (
+        '<div class="homonymie">'
+        'Cette page est une page de désambiguïsation.'
+        '</div>'
+        '<p>Article réel.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "désambiguïsation" not in result
+    assert "Article réel" in result
+
+
+def test_clean_html_removes_bandeau_container():
+    """Warning banners (Mise en garde médicale, etc.) are removed."""
+    html = (
+        '<div class="bandeau-container">'
+        '<div class="bandeau-cell">Mise en garde médicale</div>'
+        '</div>'
+        '<p>La dengue est une maladie.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "Mise en garde" not in result
+    assert "dengue est une maladie" in result
+
+
+def test_clean_html_removes_navbox():
+    """Navigation boxes at the bottom of articles are removed."""
+    html = (
+        '<p>Contenu principal.</p>'
+        '<div class="navbox">'
+        '<table><tr><td>Liens internes très longs...</td></tr></table>'
+        '</div>'
+    )
+    result = ks._clean_html(html)
+    assert "Liens internes" not in result
+    assert "Contenu principal" in result
+
+
+def test_clean_html_removes_classification_section():
+    """'Classification et ressources externes' block is removed from infoboxes."""
+    html = (
+        '<table class="infobox">'
+        '<tr><th>Causes</th><td>Virus</td></tr>'
+        '<tr><th colspan="2">Classification et ressources externes</th></tr>'
+        '<tr><td>CIM-10</td><td>A90</td></tr>'
+        '<tr><td>OMIM</td><td>614371</td></tr>'
+        '</tbody></table>'
+        '<p>Article principal.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "Causes" in result
+    assert "Virus" in result
+    assert "CIM-10" not in result
+    assert "OMIM" not in result
+    assert "614371" not in result
+    assert "Article principal" in result
+
+
+def test_clean_html_removes_edit_links():
+    """Edit section links (modifier - modifier le code) are removed."""
+    html = (
+        '<h2>Histoire'
+        '<span class="mw-editsection">'
+        '<a href="/edit">modifier</a> | <a href="/edit">modifier le code</a>'
+        '</span>'
+        '</h2>'
+        '<p>Texte historique.</p>'
+    )
+    result = ks._clean_html(html)
+    assert "modifier" not in result.lower()
+    assert "Histoire" in result
+    assert "Texte historique" in result
+
+
+def test_clean_html_removes_wikidata_markers():
+    """Wikidata/interlanguage markers like ( d ) and ( en ) are removed."""
+    html = "<p>hémostatique ( en ) , transfusion ( d ) et diurétique</p>"
+    result = ks._clean_html(html)
+    assert "( en )" not in result
+    assert "( d )" not in result
+    assert "hémostatique" in result
+    assert "transfusion" in result
+    assert "diurétique" in result
+
+
+def test_clean_html_removes_wikidata_edit_text():
+    """Leftover 'modifier - modifier le code - voir Wikidata (aide)' text is removed."""
+    html = "<p>Titre modifier - modifier le code - voir Wikidata ( aide ) Suite du texte.</p>"
+    result = ks._clean_html(html)
+    assert "modifier" not in result
+    assert "Wikidata" not in result
+    assert "Titre" in result
+    assert "Suite du texte" in result
+
+
 def test_clean_html_decodes_entities():
     """HTML entities like &nbsp; and &amp; are decoded to plain text."""
     assert ks._clean_html("<p>mot&nbsp;:&nbsp;test</p>") == "mot : test"
     assert ks._clean_html("A &amp; B") == "A & B"
     assert ks._clean_html("1 &lt; 2 &gt; 0") == "1 < 2 > 0"
+
+
+def test_clean_html_removes_reference_markers():
+    """Wikipedia reference markers [1], [ 2 ], etc. are removed."""
+    html = "<p>La dengue est une maladie<sup>[1]</sup> tropicale<sup>[2]</sup>.</p>"
+    assert ks._clean_html(html) == "La dengue est une maladie tropicale ."
+    # Also works with spaced markers after tag stripping
+    assert "[ 3 ]" not in ks._clean_html("<p>Texte [ 3 ] suite</p>")
 
 
 def test_extract_keywords_removes_stop_words():
