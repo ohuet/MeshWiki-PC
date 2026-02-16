@@ -345,14 +345,19 @@ def main() -> None:
         # Update check only if --update is passed
         if _wants_update() or _wants_indexation():
             if _wants_indexation():
-                answer = input("Un index existe déjà. Réindexer ? (o/N) ").strip().lower()
-                if answer not in ("o", "oui", "y", "yes"):
-                    logger.info("Réindexation annulée par l'utilisateur")
-                else:
-                    from meshwiki import wikipedia_indexer
-                    wikipedia_indexer.clear_checkpoints()
-                    logger.info("Réindexation forcée, lancement en arrière-plan...")
+                from meshwiki import wikipedia_indexer
+                if wikipedia_indexer.has_checkpoint():
+                    # Partial index in progress — resume automatically
+                    logger.info("Checkpoint détecté, reprise de l'indexation en arrière-plan...")
                     _run_background_reindex(cfg)
+                else:
+                    # No partial index — ask before starting from scratch
+                    answer = input("Un index existe déjà. Réindexer ? (o/N) ").strip().lower()
+                    if answer not in ("o", "oui", "y", "yes"):
+                        logger.info("Réindexation annulée par l'utilisateur")
+                    else:
+                        logger.info("Réindexation forcée, lancement en arrière-plan...")
+                        _run_background_reindex(cfg)
             else:
                 logger.info("Mise à jour demandée, téléchargement du ZIM en arrière-plan...")
                 _run_background_download(cfg)

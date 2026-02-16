@@ -27,6 +27,11 @@ _force_fresh = False
 _indexing_lock = threading.Lock()
 
 
+def has_checkpoint() -> bool:
+    """Return True if an indexing checkpoint file exists (partial index in progress)."""
+    return CHECKPOINT_FILE.exists() or CHECKPOINT_FILE.with_suffix(".tmp").exists()
+
+
 def clear_checkpoints() -> None:
     """Delete all indexing checkpoint files to force a fresh reindexation."""
     for suffix in (".json", ".tmp"):
@@ -604,7 +609,7 @@ def index_zim(
                     r_pct = r / total_sb * 100 if total_sb else 0
                     l_pct = l / total_sb * 100 if total_sb else 0
                     progress.set_sub_progress(
-                        "  Distant %d/%d [%s] | Local %d/%d [%s]"
+                        "  Embedding distant : Batch %d/%d [%s] | Embedding local : Batch %d/%d [%s]"
                         % (r, total_sb, format_bar(r_pct, SUB_BAR_W),
                            l, total_sb, format_bar(l_pct, SUB_BAR_W))
                     )
@@ -664,7 +669,7 @@ def index_zim(
                 def _on_remote_sub_batch(done: int, total: int):
                     pct = done / total * 100 if total else 0
                     progress.set_sub_progress(
-                        "  Distant %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
+                        "  Embedding distant : Batch %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
                     )
 
                 def _remote_batch(texts):
