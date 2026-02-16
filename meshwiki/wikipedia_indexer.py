@@ -324,6 +324,8 @@ def index_zim(
     db_path: str | None = None,
     skip_titles: set[str] | None = None,
     append: bool = False,
+    on_progress: 'Callable[[int, int, int], None] | None' = None,
+    resume_from: tuple[int, int, int] | None = None,
 ) -> dict:
     """Read a ZIM file and index its content into ChromaDB.
 
@@ -335,6 +337,10 @@ def index_zim(
         db_path: ChromaDB database directory. Defaults to config vectordb.path.
         skip_titles: Set of article titles to skip (already indexed by a prior ZIM).
         append: If True, do not delete the existing collection on fresh start.
+        on_progress: Callback(last_entry_index, article_count, chunk_count) called
+            after each batch. Replaces _save_checkpoint when provided (multi-ZIM mode).
+        resume_from: (last_entry_index, article_count, chunk_count) to resume from.
+            Replaces _load_checkpoint when provided (multi-ZIM mode).
 
     Returns stats: {"article_count": int, "chunk_count": int, "indexed_titles": set[str]}
     """
@@ -393,9 +399,9 @@ def index_zim(
 
     client = chromadb.PersistentClient(path=vectordb_path)
 
-    checkpoint = _load_checkpoint(collection_name, zim_path)
-    resuming = checkpoint is not None
-    if resuming:
+    # Determine resume state: from parameter (multi-ZIM) or from checkpoint file (standalone)
+    checkpoint = resume_from or _load_checkpoint(collection_name, zim_path)
+    if checkpoint is not None:
         start_index, article_count, chunk_count = checkpoint
         start_index += 1  # Resume after the last processed entry
         logger.info(
@@ -446,9 +452,7 @@ def index_zim(
 
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
     producer_completed = threading.Event()
-    # When resuming, collect all titles from this ZIM so that index_all_zims
-    # can properly deduplicate the next ZIM (not just titles from start_index onward)
-    p_indexed_titles: set[str] = _collect_titles(zim_path) if resuming else set()
+    p_indexed_titles: set[str] = set()
 
     def _producer():
         nonlocal article_count, chunk_count
@@ -544,6 +548,11 @@ def index_zim(
     write_queue: queue.Queue = queue.Queue(maxsize=2)
     writer_error: list[Exception] = []
 
+    # Choose checkpoint save function: callback (multi-ZIM) or file (standalone)
+    _progress_fn = on_progress if on_progress is not None else (
+        lambda idx, art, chk: _save_checkpoint(collection_name, zim_path, idx, art, chk)
+    )
+
     def _writer():
         while True:
             item = write_queue.get()
@@ -557,7 +566,7 @@ def index_zim(
                     embeddings=w_embeddings,
                     metadatas=w_metadatas,
                 )
-                _save_checkpoint(collection_name, zim_path, w_entry_idx, w_art, w_chunk)
+                _progress_fn(w_entry_idx, w_art, w_chunk)
             except Exception as e:
                 logger.error("Writer error: %s", e)
                 writer_error.append(e)
@@ -735,14 +744,16 @@ def index_zim(
         logger.warning("Indexation interrompue — checkpoint conservé pour reprise")
         raise RuntimeError("Indexation interrupted")
 
-    # Indexation complete — archive checkpoint files
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
-        if cp.exists():
-            done_name = f"indexing_checkpoint_done_at_{timestamp}{cp.suffix}"
-            dest = cp.parent / done_name
-            cp.rename(dest)
-            logger.info("Checkpoint archivé : %s → %s", cp.name, done_name)
+    # Indexation complete — archive checkpoint files (standalone mode only;
+    # in multi-ZIM mode the caller manages the checkpoint lifecycle)
+    if on_progress is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
+            if cp.exists():
+                done_name = f"indexing_checkpoint_done_at_{timestamp}{cp.suffix}"
+                dest = cp.parent / done_name
+                cp.rename(dest)
+                logger.info("Checkpoint archivé : %s → %s", cp.name, done_name)
 
     elapsed = time.monotonic() - start_time
     stats = {"article_count": article_count, "chunk_count": chunk_count, "indexed_titles": p_indexed_titles}
@@ -800,11 +811,13 @@ def _save_multi_checkpoint(
     zim_names: list[str],
     completed_zims: list[str],
     current_zim: str | None,
-    last_entry_index: int,
-    article_count: int,
-    chunk_count: int,
+    current_entry_index: int,
+    current_article_count: int,
+    current_chunk_count: int,
+    total_article_count: int,
+    total_chunk_count: int,
 ) -> None:
-    """Save multi-ZIM indexing progress."""
+    """Save multi-ZIM indexing progress (including current ZIM state)."""
     import shutil
     CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = CHECKPOINT_FILE.with_suffix(".tmp")
@@ -814,9 +827,11 @@ def _save_multi_checkpoint(
         "zim_files": zim_names,
         "completed_zims": completed_zims,
         "current_zim": current_zim,
-        "last_entry_index": last_entry_index,
-        "article_count": article_count,
-        "chunk_count": chunk_count,
+        "current_entry_index": current_entry_index,
+        "current_article_count": current_article_count,
+        "current_chunk_count": current_chunk_count,
+        "total_article_count": total_article_count,
+        "total_chunk_count": total_chunk_count,
     })
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(data)
@@ -861,8 +876,8 @@ def index_all_zims(
 
     if checkpoint is not None:
         completed_zims = list(checkpoint["completed_zims"])
-        total_articles = checkpoint["article_count"]
-        total_chunks = checkpoint["chunk_count"]
+        total_articles = checkpoint["total_article_count"]
+        total_chunks = checkpoint["total_chunk_count"]
         logger.info(
             "Reprise multi-ZIM : %d/%d ZIM complétés, %d articles, %d chunks",
             len(completed_zims), len(zim_names), total_articles, total_chunks,
@@ -877,7 +892,6 @@ def index_all_zims(
         # Fresh start: delete the collection
         cfg = config.load_config()
         vectordb_path = db_path or cfg["vectordb"]["path"]
-        import chromadb
         client = chromadb.PersistentClient(path=vectordb_path)
         try:
             client.delete_collection(collection_name)
@@ -896,10 +910,23 @@ def index_all_zims(
             len(seen_titles),
         )
 
-        _save_multi_checkpoint(
-            collection_name, zim_names, completed_zims,
-            zim_path.name, 0, total_articles, total_chunks,
-        )
+        # Resume state for current ZIM (from multi checkpoint)
+        resume_from = None
+        if checkpoint and checkpoint.get("current_zim") == zim_path.name:
+            resume_from = (
+                checkpoint["current_entry_index"],
+                checkpoint["current_article_count"],
+                checkpoint["current_chunk_count"],
+            )
+
+        # Callback: save multi checkpoint with current ZIM progress
+        def _on_progress(entry_idx, art_count, chunk_count, _zim=zim_path.name):
+            _save_multi_checkpoint(
+                collection_name, zim_names, completed_zims,
+                _zim, entry_idx, art_count, chunk_count,
+                total_articles + art_count,
+                total_chunks + chunk_count,
+            )
 
         stats = index_zim(
             zim_path,
@@ -907,17 +934,20 @@ def index_all_zims(
             db_path,
             skip_titles=seen_titles if seen_titles else None,
             append=not is_first_zim,
+            on_progress=_on_progress,
+            resume_from=resume_from,
         )
 
         total_articles += stats["article_count"]
         total_chunks += stats["chunk_count"]
-        seen_titles |= stats.get("indexed_titles", set())
+        seen_titles |= _collect_titles(zim_path)
         completed_zims.append(zim_path.name)
         is_first_zim = False
 
         _save_multi_checkpoint(
             collection_name, zim_names, completed_zims,
-            None, 0, total_articles, total_chunks,
+            None, 0, 0, 0,
+            total_articles, total_chunks,
         )
 
         logger.info(

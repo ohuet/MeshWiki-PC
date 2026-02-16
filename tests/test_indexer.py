@@ -178,9 +178,8 @@ def test_load_checkpoint_no_file(mock_cp_file):
 @patch("meshwiki.wikipedia_indexer._load_checkpoint")
 @patch("meshwiki.wikipedia_indexer._save_checkpoint")
 @patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
-@patch("meshwiki.wikipedia_indexer._collect_titles", return_value={"Already Indexed"})
 def test_index_zim_resumes_from_checkpoint(
-    mock_collect, mock_cp_file, mock_save_cp, mock_load_cp, mock_chromadb, mock_config
+    mock_cp_file, mock_save_cp, mock_load_cp, mock_chromadb, mock_config
 ):
     """When a checkpoint exists, the collection is NOT deleted and the loop starts at the right index."""
     mock_config.return_value = {
@@ -222,19 +221,70 @@ def test_index_zim_resumes_from_checkpoint(
     # Collection should NOT have been deleted (no delete_collection call)
     mock_client.delete_collection.assert_not_called()
 
-    # _collect_titles called once on resume to get all titles for deduplication
-    mock_collect.assert_called_once()
-
     # Archive._get_entry_by_id should only be called for index 5 (resume at 4+1=5)
     mock_archive._get_entry_by_id.assert_called_once_with(5)
 
     # Stats should include the resumed counts + the new article
     assert stats["article_count"] == 3  # 2 from checkpoint + 1 new
     assert stats["chunk_count"] >= 7  # 6 from checkpoint + at least 1 new
-
-    # indexed_titles should contain titles from _collect_titles + newly indexed
-    assert "Already Indexed" in stats["indexed_titles"]
     assert "Resume Article" in stats["indexed_titles"]
+
+
+@patch("meshwiki.config.load_config")
+@patch("meshwiki.wikipedia_indexer.chromadb")
+def test_index_zim_with_on_progress_and_resume_from(mock_chromadb, mock_config):
+    """index_zim uses on_progress callback instead of _save_checkpoint, and resume_from instead of _load_checkpoint."""
+    mock_config.return_value = {
+        "embeddings": {"model": "test-model", "chunk_size": 50, "chunk_overlap": 10},
+        "vectordb": {"path": "./test_db"},
+    }
+
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_chromadb.PersistentClient.return_value = mock_client
+    mock_client.get_or_create_collection.return_value = mock_collection
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
+
+    # Archive: 6 entries, entry 5 is a valid article
+    mock_entry = MagicMock()
+    mock_entry.is_redirect = False
+    mock_entry.path = "A/Test"
+    mock_entry.title = "Test Article"
+    mock_item = MagicMock()
+    mock_item.content = b"<p>" + b"Content word for testing purposes here. " * 20 + b"</p>"
+    mock_entry.get_item.return_value = mock_item
+
+    mock_archive = MagicMock()
+    mock_archive.entry_count = 6
+    mock_archive._get_entry_by_id.return_value = mock_entry
+
+    progress_calls = []
+
+    with patch("libzim.reader.Archive", return_value=mock_archive), \
+         patch("sentence_transformers.SentenceTransformer", return_value=mock_model), \
+         patch("meshwiki.wikipedia_indexer._save_checkpoint") as mock_save, \
+         patch("meshwiki.wikipedia_indexer._load_checkpoint") as mock_load:
+        from meshwiki.wikipedia_indexer import index_zim
+        stats = index_zim(
+            Path("test.zim"), "test_col",
+            on_progress=lambda idx, art, chk: progress_calls.append((idx, art, chk)),
+            resume_from=(4, 2, 6),
+        )
+
+    # _save_checkpoint should NOT have been called (on_progress replaces it)
+    mock_save.assert_not_called()
+    # _load_checkpoint should NOT have been called (resume_from replaces it)
+    mock_load.assert_not_called()
+
+    # on_progress should have been called at least once
+    assert len(progress_calls) > 0
+
+    # Collection should NOT have been deleted (resume implies append)
+    mock_client.delete_collection.assert_not_called()
+
+    assert stats["article_count"] == 3  # 2 from resume + 1 new
 
 
 @patch("meshwiki.config.load_config")
@@ -448,3 +498,107 @@ def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config, 
     initial_eta = mock_set_eta.call_args_list[0][0][0]
     assert initial_eta.tzinfo is not None
     assert initial_eta.utcoffset() == timedelta(hours=4)
+
+
+@patch("meshwiki.wikipedia_indexer.index_zim")
+@patch("meshwiki.wikipedia_indexer._load_multi_checkpoint")
+@patch("meshwiki.wikipedia_indexer._save_multi_checkpoint")
+@patch("meshwiki.wikipedia_indexer._collect_titles")
+@patch("meshwiki.config.load_config")
+@patch("meshwiki.wikipedia_indexer.chromadb")
+def test_index_all_zims_resumes_with_callback(
+    mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
+):
+    """index_all_zims passes on_progress and resume_from to index_zim on resume."""
+    mock_config.return_value = {
+        "vectordb": {"path": "./test_db"},
+    }
+    mock_client = MagicMock()
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    # Checkpoint: ZIM 1 completed, ZIM 2 in progress at entry 500
+    mock_load_multi.return_value = {
+        "multi": True,
+        "collection_name": "wikipedia",
+        "zim_files": ["small.zim", "big.zim"],
+        "completed_zims": ["small.zim"],
+        "current_zim": "big.zim",
+        "current_entry_index": 500,
+        "current_article_count": 100,
+        "current_chunk_count": 600,
+        "total_article_count": 250,
+        "total_chunk_count": 1500,
+    }
+
+    mock_collect.return_value = {"Title A", "Title B"}
+    mock_index_zim.return_value = {"article_count": 200, "chunk_count": 1200, "indexed_titles": set()}
+
+    from meshwiki.wikipedia_indexer import index_all_zims
+    zim_paths = [Path("small.zim"), Path("big.zim")]
+    stats = index_all_zims(zim_paths, "wikipedia", "./test_db")
+
+    # index_zim should be called only for big.zim (small.zim is completed)
+    mock_index_zim.assert_called_once()
+    call_kwargs = mock_index_zim.call_args
+    assert call_kwargs[0][0] == Path("big.zim")
+
+    # resume_from should be passed from checkpoint
+    assert call_kwargs[1]["resume_from"] == (500, 100, 600)
+
+    # on_progress callback should be provided
+    assert call_kwargs[1]["on_progress"] is not None
+
+    # _collect_titles called for small.zim (completed, rebuild seen_titles)
+    # and for big.zim (after indexation, for deduplication of next ZIMs)
+    assert mock_collect.call_count == 2
+
+    # Collection should NOT be deleted (resume, not fresh start)
+    mock_client.delete_collection.assert_not_called()
+
+    # Stats cumulative: 250 (from completed) + 200 (new)
+    assert stats["article_count"] == 450
+
+
+@patch("meshwiki.wikipedia_indexer.index_zim")
+@patch("meshwiki.wikipedia_indexer._load_multi_checkpoint")
+@patch("meshwiki.wikipedia_indexer._save_multi_checkpoint")
+@patch("meshwiki.wikipedia_indexer._collect_titles")
+@patch("meshwiki.config.load_config")
+@patch("meshwiki.wikipedia_indexer.chromadb")
+def test_index_all_zims_fresh_start(
+    mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
+):
+    """index_all_zims deletes collection and passes no resume_from on fresh start."""
+    mock_config.return_value = {
+        "vectordb": {"path": "./test_db"},
+    }
+    mock_client = MagicMock()
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    # No checkpoint
+    mock_load_multi.return_value = None
+
+    mock_collect.return_value = {"Title A"}
+    mock_index_zim.return_value = {"article_count": 50, "chunk_count": 300, "indexed_titles": set()}
+
+    from meshwiki.wikipedia_indexer import index_all_zims
+    zim_paths = [Path("a.zim"), Path("b.zim")]
+    stats = index_all_zims(zim_paths, "wikipedia", "./test_db")
+
+    # Collection deleted for fresh start
+    mock_client.delete_collection.assert_called_once_with("wikipedia")
+
+    # index_zim called twice (both ZIMs)
+    assert mock_index_zim.call_count == 2
+
+    # First ZIM: no resume_from, no skip_titles
+    first_call = mock_index_zim.call_args_list[0]
+    assert first_call[1]["resume_from"] is None
+    assert first_call[1]["skip_titles"] is None
+
+    # Second ZIM: no resume_from, but skip_titles from first ZIM
+    second_call = mock_index_zim.call_args_list[1]
+    assert second_call[1]["resume_from"] is None
+    assert second_call[1]["skip_titles"] == {"Title A"}
+
+    assert stats["article_count"] == 100
