@@ -21,6 +21,7 @@ from meshwiki.progress import ProgressDisplay, format_bar
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILE = Path("data/indexing_checkpoint.json")
+MULTI_CHECKPOINT_FILE = Path("data/indexing_multi_checkpoint.json")
 
 _indexing_eta: datetime | None = None
 _force_fresh = False
@@ -29,16 +30,21 @@ _indexing_lock = threading.Lock()
 
 def has_checkpoint() -> bool:
     """Return True if an indexing checkpoint file exists (partial index in progress)."""
-    return CHECKPOINT_FILE.exists() or CHECKPOINT_FILE.with_suffix(".tmp").exists()
+    for cp in (CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE):
+        for suffix in (".json", ".tmp"):
+            if cp.with_suffix(suffix).exists():
+                return True
+    return False
 
 
 def clear_checkpoints() -> None:
     """Delete all indexing checkpoint files to force a fresh reindexation."""
-    for suffix in (".json", ".tmp"):
-        path = CHECKPOINT_FILE.with_suffix(suffix)
-        if path.exists():
-            path.unlink()
-            logger.info("Checkpoint supprimé : %s", path)
+    for cp in (CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE):
+        for suffix in (".json", ".tmp"):
+            path = cp.with_suffix(suffix)
+            if path.exists():
+                path.unlink()
+                logger.info("Checkpoint supprimé : %s", path)
 
 
 def get_indexing_eta() -> datetime | None:
@@ -190,8 +196,10 @@ def _try_read_checkpoint(path: Path, collection_name: str, zim_path: Path) -> tu
             data.get("collection_name"), collection_name,
             data.get("zim_filename"), Path(zim_path).name,
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
+    except json.JSONDecodeError as e:
         logger.warning("Checkpoint corrompu dans %s (%s), ignoré", path, e)
+    except (KeyError, TypeError) as e:
+        logger.info("Checkpoint incompatible dans %s (%s), ignoré", path, e)
     return None
 
 
@@ -761,9 +769,6 @@ def _collect_titles(zim_path: Path) -> set[str]:
             titles.add(entry.title)
     logger.info("Titres collectés depuis %s : %d articles", zim_path.name, len(titles))
     return titles
-
-
-MULTI_CHECKPOINT_FILE = CHECKPOINT_FILE  # Same file, enriched format
 
 
 def _load_multi_checkpoint(
