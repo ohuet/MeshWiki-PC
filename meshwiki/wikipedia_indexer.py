@@ -560,6 +560,7 @@ def index_zim(
                 break
             w_ids, w_docs, w_embeddings, w_metadatas, w_entry_idx, w_art, w_chunk = item
             try:
+                progress.set_info("Insertion de %d chunks dans ChromaDB..." % len(w_ids))
                 collection.add(
                     ids=w_ids,
                     documents=w_docs,
@@ -578,6 +579,7 @@ def index_zim(
     # --- Consumer (main thread): encodes embeddings, sends to writer ---
     consumer_error = None
     while True:
+        progress.set_info("Extraction des articles...")
         batch = batch_queue.get()
         if batch is None:
             break
