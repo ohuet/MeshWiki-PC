@@ -178,8 +178,9 @@ def test_load_checkpoint_no_file(mock_cp_file):
 @patch("meshwiki.wikipedia_indexer._load_checkpoint")
 @patch("meshwiki.wikipedia_indexer._save_checkpoint")
 @patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
+@patch("meshwiki.wikipedia_indexer._collect_titles", return_value={"Already Indexed"})
 def test_index_zim_resumes_from_checkpoint(
-    mock_cp_file, mock_save_cp, mock_load_cp, mock_chromadb, mock_config
+    mock_collect, mock_cp_file, mock_save_cp, mock_load_cp, mock_chromadb, mock_config
 ):
     """When a checkpoint exists, the collection is NOT deleted and the loop starts at the right index."""
     mock_config.return_value = {
@@ -221,12 +222,19 @@ def test_index_zim_resumes_from_checkpoint(
     # Collection should NOT have been deleted (no delete_collection call)
     mock_client.delete_collection.assert_not_called()
 
+    # _collect_titles called once on resume to get all titles for deduplication
+    mock_collect.assert_called_once()
+
     # Archive._get_entry_by_id should only be called for index 5 (resume at 4+1=5)
     mock_archive._get_entry_by_id.assert_called_once_with(5)
 
     # Stats should include the resumed counts + the new article
     assert stats["article_count"] == 3  # 2 from checkpoint + 1 new
     assert stats["chunk_count"] >= 7  # 6 from checkpoint + at least 1 new
+
+    # indexed_titles should contain titles from _collect_titles + newly indexed
+    assert "Already Indexed" in stats["indexed_titles"]
+    assert "Resume Article" in stats["indexed_titles"]
 
 
 @patch("meshwiki.config.load_config")

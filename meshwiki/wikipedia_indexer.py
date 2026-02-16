@@ -21,7 +21,6 @@ from meshwiki.progress import ProgressDisplay, format_bar
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILE = Path("data/indexing_checkpoint.json")
-MULTI_CHECKPOINT_FILE = Path("data/indexing_multi_checkpoint.json")
 
 _indexing_eta: datetime | None = None
 _force_fresh = False
@@ -30,21 +29,16 @@ _indexing_lock = threading.Lock()
 
 def has_checkpoint() -> bool:
     """Return True if an indexing checkpoint file exists (partial index in progress)."""
-    for cp in (CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE):
-        for suffix in (".json", ".tmp"):
-            if cp.with_suffix(suffix).exists():
-                return True
-    return False
+    return CHECKPOINT_FILE.exists() or CHECKPOINT_FILE.with_suffix(".tmp").exists()
 
 
 def clear_checkpoints() -> None:
     """Delete all indexing checkpoint files to force a fresh reindexation."""
-    for cp in (CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE):
-        for suffix in (".json", ".tmp"):
-            path = cp.with_suffix(suffix)
-            if path.exists():
-                path.unlink()
-                logger.info("Checkpoint supprimé : %s", path)
+    for suffix in (".json", ".tmp"):
+        path = CHECKPOINT_FILE.with_suffix(suffix)
+        if path.exists():
+            path.unlink()
+            logger.info("Checkpoint supprimé : %s", path)
 
 
 def get_indexing_eta() -> datetime | None:
@@ -183,11 +177,13 @@ def _is_content_article(entry) -> bool:
 
 
 def _try_read_checkpoint(path: Path, collection_name: str, zim_path: Path) -> tuple[int, int, int] | None:
-    """Try to read and validate a checkpoint from the given path."""
+    """Try to read and validate a single-ZIM checkpoint from the given path."""
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("multi"):
+            return None  # Multi-ZIM checkpoint — not for us
         if (data["collection_name"] == collection_name
                 and data["zim_filename"] == Path(zim_path).name):
             return (data["last_entry_index"], data["article_count"], data["chunk_count"])
@@ -199,7 +195,7 @@ def _try_read_checkpoint(path: Path, collection_name: str, zim_path: Path) -> tu
     except json.JSONDecodeError as e:
         logger.warning("Checkpoint corrompu dans %s (%s), ignoré", path, e)
     except (KeyError, TypeError) as e:
-        logger.info("Checkpoint incompatible dans %s (%s), ignoré", path, e)
+        logger.warning("Checkpoint corrompu dans %s (%s), ignoré", path, e)
     return None
 
 
@@ -398,7 +394,8 @@ def index_zim(
     client = chromadb.PersistentClient(path=vectordb_path)
 
     checkpoint = _load_checkpoint(collection_name, zim_path)
-    if checkpoint is not None:
+    resuming = checkpoint is not None
+    if resuming:
         start_index, article_count, chunk_count = checkpoint
         start_index += 1  # Resume after the last processed entry
         logger.info(
@@ -449,7 +446,9 @@ def index_zim(
 
     # --- Producer: reads ZIM, cleans HTML, chunks, puts batches in queue ---
     producer_completed = threading.Event()
-    p_indexed_titles: set[str] = set()
+    # When resuming, collect all titles from this ZIM so that index_all_zims
+    # can properly deduplicate the next ZIM (not just titles from start_index onward)
+    p_indexed_titles: set[str] = _collect_titles(zim_path) if resuming else set()
 
     def _producer():
         nonlocal article_count, chunk_count
@@ -775,7 +774,7 @@ def _load_multi_checkpoint(
     collection_name: str, zim_names: list[str],
 ) -> dict | None:
     """Load a multi-ZIM checkpoint if it matches the current ZIM list."""
-    for path in (MULTI_CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE.with_suffix(".tmp")):
+    for path in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
         if not path.exists():
             continue
         try:
@@ -807,8 +806,8 @@ def _save_multi_checkpoint(
 ) -> None:
     """Save multi-ZIM indexing progress."""
     import shutil
-    MULTI_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = MULTI_CHECKPOINT_FILE.with_suffix(".tmp")
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CHECKPOINT_FILE.with_suffix(".tmp")
     data = json.dumps({
         "multi": True,
         "collection_name": collection_name,
@@ -823,8 +822,8 @@ def _save_multi_checkpoint(
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    shutil.copy2(tmp, MULTI_CHECKPOINT_FILE)
-    with open(MULTI_CHECKPOINT_FILE, "r+b") as f:
+    shutil.copy2(tmp, CHECKPOINT_FILE)
+    with open(CHECKPOINT_FILE, "r+b") as f:
         os.fsync(f.fileno())
 
 
@@ -928,7 +927,7 @@ def index_all_zims(
 
     # Archive multi checkpoint
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for cp in (MULTI_CHECKPOINT_FILE, MULTI_CHECKPOINT_FILE.with_suffix(".tmp")):
+    for cp in (CHECKPOINT_FILE, CHECKPOINT_FILE.with_suffix(".tmp")):
         if cp.exists():
             done_name = f"indexing_checkpoint_done_at_{timestamp}{cp.suffix}"
             dest = cp.parent / done_name
