@@ -215,6 +215,9 @@ class WikipediaUpdater:
             # the checkpoint file survives causes data loss on resume.
             # The database and checkpoint stay in sync for safe resume.
             logger.error("Reindexation failed: %s", e)
+            # Ensure ETA is cleaned up so Kiwix answers don't show stale ETA
+            from meshwiki.wikipedia_indexer import clear_indexing_eta
+            clear_indexing_eta()
             return False
 
     def cleanup(self) -> None:

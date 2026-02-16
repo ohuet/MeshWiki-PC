@@ -42,6 +42,11 @@ def get_indexing_eta() -> datetime | None:
         return _indexing_eta
 
 
+def clear_indexing_eta() -> None:
+    """Clear the indexing ETA (e.g. after a failure)."""
+    _set_indexing_eta(None)
+
+
 def _set_indexing_eta(eta: datetime | None) -> None:
     """Update the estimated completion time of the current indexation."""
     global _indexing_eta
@@ -240,6 +245,68 @@ def _save_checkpoint(
     shutil.copy2(tmp, CHECKPOINT_FILE)
     with open(CHECKPOINT_FILE, "r+b") as f:
         os.fsync(f.fileno())
+
+
+def _encode_with_retry(
+    texts: list[str],
+    remote_encode_fn,
+    local_encode_fn,
+    label: str = "",
+) -> list[list[float]]:
+    """Encode texts with resilient retry strategy.
+
+    Retry cycle:
+      1. Remote attempt 1
+      2. Wait 30s → Remote attempt 2
+      3. Wait 60s → Remote attempt 3
+      4. Local attempt 1
+      5. Wait 30s → Local attempt 2
+      6. Wait 60s → Local attempt 3
+      7. Wait 30 min → restart from step 1
+
+    Args:
+        texts: Texts to encode.
+        remote_encode_fn: Callable returning embeddings list or None on failure.
+        local_encode_fn: Callable returning embeddings list (may raise on CUDA error).
+                         None if no local model available.
+        label: Description for log messages.
+    """
+    cycle = 0
+    while True:
+        cycle += 1
+        if cycle > 1:
+            logger.warning(
+                "Encodage %s — nouveau cycle de retry (#%d) après 30 min d'attente",
+                label, cycle,
+            )
+
+        # Remote attempts
+        for attempt, wait in [(1, 0), (2, 30), (3, 60)]:
+            if wait:
+                logger.info("Attente %ds avant retry distant #%d %s...", wait, attempt, label)
+                time.sleep(wait)
+            result = remote_encode_fn(texts)
+            if result is not None:
+                return result
+            logger.warning("Échec distant #%d %s (%d chunks)", attempt, label, len(texts))
+
+        # Local attempts
+        if local_encode_fn is not None:
+            for attempt, wait in [(1, 0), (2, 30), (3, 60)]:
+                if wait:
+                    logger.info("Attente %ds avant retry local #%d %s...", wait, attempt, label)
+                    time.sleep(wait)
+                try:
+                    return local_encode_fn(texts)
+                except Exception as e:
+                    logger.warning("Échec local #%d %s : %s", attempt, label, e)
+
+        # All failed — wait 30 minutes and restart
+        logger.error(
+            "Tous les encodages ont échoué %s — attente de 30 min avant nouveau cycle...",
+            label,
+        )
+        time.sleep(30 * 60)
 
 
 def index_zim(
@@ -488,6 +555,7 @@ def index_zim(
     writer_thread.start()
 
     # --- Consumer (main thread): encodes embeddings, sends to writer ---
+    consumer_error = None
     while True:
         batch = batch_queue.get()
         if batch is None:
@@ -496,131 +564,139 @@ def index_zim(
         if writer_error:
             break
 
-        batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
-        progress.set_info("Encodage de %d chunks..." % len(batch_ids))
+        try:
+            batch_ids, batch_docs, batch_metadatas, last_entry_idx, article_count, chunk_count = batch
+            progress.set_info("Encodage de %d chunks..." % len(batch_ids))
 
-        if remote_configured and local_workers > 0:
-            # Hybrid mode: work-stealing between remote and local GPU
-            from concurrent.futures import ThreadPoolExecutor
-            remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
-            remote_params = remote_embeddings.prepare(cfg)
+            if remote_configured and local_workers > 0:
+                # Hybrid mode: work-stealing between remote and local GPU
+                from concurrent.futures import ThreadPoolExecutor
+                remote_batch_size = embeddings_config["remote"].get("batch_size", 256)
+                remote_params = remote_embeddings.prepare(cfg)
 
-            # Split into sub-batches
-            sb_list = []
-            for sb_start in range(0, len(batch_docs), remote_batch_size):
-                sb_list.append(batch_docs[sb_start : sb_start + remote_batch_size])
+                # Split into sub-batches
+                sb_list = []
+                for sb_start in range(0, len(batch_docs), remote_batch_size):
+                    sb_list.append(batch_docs[sb_start : sb_start + remote_batch_size])
 
-            work_queue = queue.Queue()
-            for i, sb in enumerate(sb_list):
-                work_queue.put((i, sb))
+                work_queue = queue.Queue()
+                for i, sb in enumerate(sb_list):
+                    work_queue.put((i, sb))
 
-            sb_results: list[list[list[float]] | None] = [None] * len(sb_list)
-            local_model = _get_local_model()
-            local_lock = threading.Lock()
+                sb_results: list[list[list[float]] | None] = [None] * len(sb_list)
+                local_model = _get_local_model()
+                local_lock = threading.Lock()
 
-            total_sb = len(sb_list)
-            remote_done = 0
-            local_done = 0
-            sb_done_lock = threading.Lock()
-            SUB_BAR_W = 10
+                total_sb = len(sb_list)
+                remote_done = 0
+                local_done = 0
+                sb_done_lock = threading.Lock()
+                SUB_BAR_W = 10
 
-            def _update_hybrid_progress(worker_type: str):
-                nonlocal remote_done, local_done
-                with sb_done_lock:
-                    if worker_type == "remote":
-                        remote_done += 1
-                    else:
-                        local_done += 1
-                    r, l = remote_done, local_done
-                r_pct = r / total_sb * 100 if total_sb else 0
-                l_pct = l / total_sb * 100 if total_sb else 0
-                progress.set_sub_progress(
-                    "  Distant %d/%d [%s] | Local %d/%d [%s]"
-                    % (r, total_sb, format_bar(r_pct, SUB_BAR_W),
-                       l, total_sb, format_bar(l_pct, SUB_BAR_W))
-                )
+                def _update_hybrid_progress(worker_type: str):
+                    nonlocal remote_done, local_done
+                    with sb_done_lock:
+                        if worker_type == "remote":
+                            remote_done += 1
+                        else:
+                            local_done += 1
+                        r, l = remote_done, local_done
+                    r_pct = r / total_sb * 100 if total_sb else 0
+                    l_pct = l / total_sb * 100 if total_sb else 0
+                    progress.set_sub_progress(
+                        "  Distant %d/%d [%s] | Local %d/%d [%s]"
+                        % (r, total_sb, format_bar(r_pct, SUB_BAR_W),
+                           l, total_sb, format_bar(l_pct, SUB_BAR_W))
+                    )
 
-            def _remote_worker():
-                while True:
-                    try:
-                        idx, docs = work_queue.get_nowait()
-                    except queue.Empty:
-                        return
-                    embs = remote_embeddings.encode_single(docs, remote_params)
-                    if embs is None:
-                        logger.warning(
-                            "FALLBACK LOCAL : échec distant, encodage local (%d chunks)",
-                            len(docs),
+                def _remote_worker():
+                    while True:
+                        try:
+                            idx, docs = work_queue.get_nowait()
+                        except queue.Empty:
+                            return
+
+                        def _remote_single(texts):
+                            return remote_embeddings.encode_single(texts, remote_params)
+
+                        def _local_single(texts):
+                            with local_lock:
+                                return local_model.encode(
+                                    texts, batch_size=64, show_progress_bar=False,
+                                ).tolist()
+
+                        sb_results[idx] = _encode_with_retry(
+                            docs, _remote_single, _local_single,
+                            label=f"(sub-batch {idx})",
                         )
+                        _update_hybrid_progress("remote")
+
+                def _local_worker():
+                    while True:
+                        try:
+                            idx, docs = work_queue.get_nowait()
+                        except queue.Empty:
+                            return
                         with local_lock:
                             embs = local_model.encode(
                                 docs, batch_size=64, show_progress_bar=False,
                             ).tolist()
-                    sb_results[idx] = embs
-                    _update_hybrid_progress("remote")
+                        sb_results[idx] = embs
+                        _update_hybrid_progress("local")
 
-            def _local_worker():
-                while True:
-                    try:
-                        idx, docs = work_queue.get_nowait()
-                    except queue.Empty:
-                        return
-                    with local_lock:
-                        embs = local_model.encode(
-                            docs, batch_size=64, show_progress_bar=False,
-                        ).tolist()
-                    sb_results[idx] = embs
-                    _update_hybrid_progress("local")
+                with ThreadPoolExecutor(max_workers=max_concurrent + local_workers) as pool:
+                    futs = []
+                    for _ in range(max_concurrent):
+                        futs.append(pool.submit(_remote_worker))
+                    for _ in range(local_workers):
+                        futs.append(pool.submit(_local_worker))
+                    for f in futs:
+                        f.result()
 
-            with ThreadPoolExecutor(max_workers=max_concurrent + local_workers) as pool:
-                futs = []
-                for _ in range(max_concurrent):
-                    futs.append(pool.submit(_remote_worker))
-                for _ in range(local_workers):
-                    futs.append(pool.submit(_local_worker))
-                for f in futs:
-                    f.result()
+                batch_embeddings = []
+                for r in sb_results:
+                    batch_embeddings.extend(r)
 
-            batch_embeddings = []
-            for r in sb_results:
-                batch_embeddings.extend(r)
+            elif remote_configured:
+                # Remote-only mode (with retry)
+                SUB_BAR_W = 10
 
-        elif remote_configured:
-            # Remote-only mode (with fallback)
-            SUB_BAR_W = 10
+                def _on_remote_sub_batch(done: int, total: int):
+                    pct = done / total * 100 if total else 0
+                    progress.set_sub_progress(
+                        "  Distant %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
+                    )
 
-            def _on_remote_sub_batch(done: int, total: int):
-                pct = done / total * 100 if total else 0
-                progress.set_sub_progress(
-                    "  Distant %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
+                def _remote_batch(texts):
+                    return remote_embeddings.encode_batch(
+                        texts, cfg, on_sub_batch=_on_remote_sub_batch,
+                    )
+
+                def _local_batch(texts):
+                    m = _get_local_model()
+                    return m.encode(texts, batch_size=64, show_progress_bar=False).tolist()
+
+                batch_embeddings = _encode_with_retry(
+                    batch_docs, _remote_batch, _local_batch,
                 )
 
-            batch_embeddings = remote_embeddings.encode_batch(
-                batch_docs, cfg, on_sub_batch=_on_remote_sub_batch,
-            )
-            if batch_embeddings is None:
-                logger.warning(
-                    "FALLBACK LOCAL : échec encodage distant, utilisation modèle local (%d chunks)",
-                    len(batch_docs),
-                )
+            else:
+                # Local-only mode
                 local_model = _get_local_model()
                 batch_embeddings = local_model.encode(
                     batch_docs, batch_size=64, show_progress_bar=False,
                 ).tolist()
 
-        else:
-            # Local-only mode
-            local_model = _get_local_model()
-            batch_embeddings = local_model.encode(
-                batch_docs, batch_size=64, show_progress_bar=False,
-            ).tolist()
+            progress.set_sub_progress("")
 
-        progress.set_sub_progress("")
-
-        write_queue.put((
-            batch_ids, batch_docs, batch_embeddings, batch_metadatas,
-            last_entry_idx, article_count, chunk_count,
-        ))
+            write_queue.put((
+                batch_ids, batch_docs, batch_embeddings, batch_metadatas,
+                last_entry_idx, article_count, chunk_count,
+            ))
+        except Exception as e:
+            consumer_error = e
+            logger.error("Erreur dans la boucle d'encodage : %s", e)
+            break
 
     # Signal writer to stop and wait for it
     write_queue.put(None)
@@ -628,20 +704,22 @@ def index_zim(
 
     producer_thread.join()
 
+    # Always cleanup progress, GPU, and ETA
+    progress.stop()
+    if gpu_locked:
+        _gpu_unlock_clocks()
+    _set_indexing_eta(None)
+
+    # Check if consumer encountered an error
+    if consumer_error is not None:
+        raise consumer_error
+
     # Check if writer or producer failed
     if writer_error:
-        progress.stop()
-        if gpu_locked:
-            _gpu_unlock_clocks()
-        _set_indexing_eta(None)
         logger.error("Indexation échouée — erreur d'écriture ChromaDB")
         raise writer_error[0]
 
     if not producer_completed.is_set():
-        progress.stop()
-        if gpu_locked:
-            _gpu_unlock_clocks()
-        _set_indexing_eta(None)
         logger.warning("Indexation interrompue — checkpoint conservé pour reprise")
         raise RuntimeError("Indexation interrupted")
 
@@ -653,11 +731,6 @@ def index_zim(
             dest = cp.parent / done_name
             cp.rename(dest)
             logger.info("Checkpoint archivé : %s → %s", cp.name, done_name)
-
-    progress.stop()
-    if gpu_locked:
-        _gpu_unlock_clocks()
-    _set_indexing_eta(None)
 
     elapsed = time.monotonic() - start_time
     stats = {"article_count": article_count, "chunk_count": chunk_count, "indexed_titles": p_indexed_titles}

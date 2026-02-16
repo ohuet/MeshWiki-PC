@@ -82,10 +82,13 @@ def prepare(config: dict) -> dict | None:
     if api_key:
         session.headers["Authorization"] = f"Bearer {api_key}"
 
+    read_timeout = remote.get("timeout", 300)
+    connect_timeout = min(30, read_timeout)
+
     return {
         "url": url,
         "model": remote["model"],
-        "timeout": remote.get("timeout", 300),
+        "timeout": (connect_timeout, read_timeout),
         "parse_fn": parse_fn,
         "session": session,
         "expected_dim": config["embeddings"].get("embedding_dim"),
@@ -112,7 +115,7 @@ def encode_single(texts: list[str], params: dict) -> list[list[float]] | None:
         resp.raise_for_status()
     except requests.exceptions.Timeout:
         logger.error(
-            "Remote embedding timeout after %ds for %d texts",
+            "Remote embedding timeout after %ss for %d texts",
             params["timeout"], len(texts),
         )
         return None

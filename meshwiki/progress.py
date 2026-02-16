@@ -146,11 +146,14 @@ class _StatusHandler(logging.StreamHandler):
 
             try:
                 msg = self.format(record)
+                # Clear trailing content on each line of multi-line messages
+                # (prevents old fixed-line text from bleeding through)
+                msg = msg.replace("\n", "\033[K\n")
                 # Move up N lines, clear, write log message, then redraw fixed lines
                 sys.stderr.write(
                     f"\033[{_NUM_FIXED}A"
                     "\033[K"
-                    + msg + "\n"
+                    + msg + "\033[K\n"
                     + self._display._fixed_lines()
                 )
                 sys.stderr.flush()
