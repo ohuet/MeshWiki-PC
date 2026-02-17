@@ -123,6 +123,8 @@ def _clean_html(html: str) -> str:
         if el.tail is None or not el.tail.strip():
             el.tail = " " + (el.tail or "")
     text = doc.text_content()
+    # Remove Wikipedia reference markers: [1], [2], [Notes 1], etc.
+    text = re.sub(r"\[(?:\d+|Notes?\s*\d+)\]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     # Strip the Kiwix/Wikipedia license footer
     text = re.sub(r"\s*Cet article est issu de Wikipédia\..*$", "", text)

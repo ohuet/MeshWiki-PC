@@ -1,6 +1,7 @@
 """RAG pipeline: semantic search in ChromaDB + LLM answer generation."""
 
 import logging
+import re
 from pathlib import Path
 
 import chromadb
@@ -55,6 +56,8 @@ Ne complète JAMAIS avec tes propres connaissances."""
 SYSTEM_PROMPT_LLM_OPINION = """Tu es un assistant encyclopédique. L'information n'a PAS été trouvée dans la base Wikipedia locale.
 Réponds avec tes connaissances générales.
 Ta réponse doit être concise (max 400 caractères, transmission radio)."""
+
+_RE_WIKI_REFS = re.compile(r"\[(?:\d+|Notes?\s*\d+)\]")
 
 _model = None
 _collection = None
@@ -162,7 +165,10 @@ def query(question: str) -> str:
     group_size = 4
     for start in range(0, len(filtered), group_size):
         group = filtered[start:start + group_size]
-        context_parts = [f"[{meta.get('title', '')}] {doc}" for doc, meta, dist in group]
+        context_parts = [
+            f"[{meta.get('title', '')}] {_RE_WIKI_REFS.sub('', doc)}"
+            for doc, meta, dist in group
+        ]
         context = "\n\n".join(context_parts)
         titles = [meta.get("title", "?") for _, meta, _ in group]
 
