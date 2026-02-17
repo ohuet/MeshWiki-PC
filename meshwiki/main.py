@@ -7,6 +7,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 import json
 import logging
 from logging.handlers import RotatingFileHandler
+import shutil
 import signal
 import sys
 import threading
@@ -48,6 +49,32 @@ def _check_already_running() -> None:
     except OSError:
         logger.error("MeshWiki est déjà en cours d'exécution")
         sys.exit(1)
+
+
+def _cleanup_inactive_db() -> None:
+    """Remove the inactive ChromaDB database left over from a previous swap.
+
+    Called at startup before any ChromaDB connection, so no file handles
+    are open and shutil.rmtree succeeds even on Windows.
+    Skips cleanup when a checkpoint exists (partial indexation to resume).
+    """
+    from meshwiki.wikipedia_indexer import has_checkpoint
+    if has_checkpoint():
+        return
+
+    inactive_path = Path(collection_state.get_inactive_db_path())
+    if inactive_path.exists():
+        try:
+            shutil.rmtree(inactive_path)
+            logger.info("Ancien index nettoyé : %s", inactive_path)
+        except OSError as e:
+            logger.warning("Impossible de supprimer %s : %s", inactive_path, e)
+
+
+def _restart_app() -> None:
+    """Restart the application after a successful reindexation."""
+    logger.info("Redémarrage automatique après réindexation...")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def _check_ollama(config: dict) -> bool:
@@ -199,7 +226,9 @@ def _run_background_update(config: dict) -> None:
             pass
 
         updater = WikipediaUpdater()
-        updater.run_update()
+        success = updater.run_update()
+        if success:
+            _restart_app()
 
     thread = threading.Thread(target=_update, name="wikipedia-updater", daemon=True)
     thread.start()
@@ -226,6 +255,7 @@ def _run_background_reindex(config: dict) -> None:
         success = updater.reindex(zim_paths[0])
         if success:
             logger.info("Réindexation complète terminée avec succès")
+            _restart_app()
         else:
             logger.error("Échec de la réindexation")
 
@@ -277,6 +307,9 @@ def main() -> None:
     except FileNotFoundError:
         logger.error("config.yaml introuvable")
         sys.exit(1)
+
+    # Cleanup inactive database left over from previous swap (before any ChromaDB connection)
+    _cleanup_inactive_db()
 
     # File logging with rotation
     log_cfg = cfg.get("logging", {})

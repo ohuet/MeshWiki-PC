@@ -135,8 +135,7 @@ def test_reindex_success(mock_discover, mock_cs, mock_index_zim, mock_reset, moc
 
     updater = WikipediaUpdater()
 
-    with patch("builtins.open", mock_open()), \
-         patch("meshwiki.wikipedia_updater.threading") as mock_threading:
+    with patch("builtins.open", mock_open()):
         result = updater.reindex(zim_path)
 
     assert result is True
@@ -146,11 +145,7 @@ def test_reindex_success(mock_discover, mock_cs, mock_index_zim, mock_reset, moc
     mock_cs.set_active_slot.assert_called_once_with("b")
     # RAG cache is invalidated after swap
     mock_reset.assert_called_once()
-    # Old database is deleted in a background thread via rmtree
-    mock_threading.Thread.assert_called_once()
-    thread_kwargs = mock_threading.Thread.call_args[1]
-    assert thread_kwargs["args"] == ("./data/chroma_db_a",)
-    assert thread_kwargs["daemon"] is True
+    # Old database cleanup is deferred to next startup (_cleanup_inactive_db)
 
 
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)

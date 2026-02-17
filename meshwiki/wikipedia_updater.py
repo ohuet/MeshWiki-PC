@@ -3,7 +3,6 @@
 import json
 import logging
 import shutil
-import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -188,12 +187,8 @@ class WikipediaUpdater:
             # Invalidate RAG cache so it picks up the new database
             reset_collection()
 
-            # Delete old database in background (instant rmtree)
-            threading.Thread(
-                target=_rmtree_safe,
-                args=(old_db_path,),
-                daemon=True,
-            ).start()
+            # Old database cleanup is deferred to next startup (_cleanup_inactive_db)
+            # to avoid WinError 32 (file locked by PersistentClient).
 
             # Update tracking file
             LAST_UPDATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -233,13 +228,16 @@ class WikipediaUpdater:
                 except OSError:
                     pass
 
-    def run_update(self) -> None:
-        """Full update cycle: check, download, reindex, cleanup."""
+    def run_update(self) -> bool:
+        """Full update cycle: check, download, reindex, cleanup.
+
+        Returns True if reindexation succeeded, False otherwise.
+        """
         logger.info("Vérification des mises à jour Wikipedia...")
 
         zim_path = self.download_dump()
         if zim_path is None:
-            return
+            return False
 
         logger.info("Nouveau dump disponible, ré-indexation en cours...")
         success = self.reindex(zim_path)
@@ -249,3 +247,4 @@ class WikipediaUpdater:
             logger.info("Base Wikipedia mise à jour avec succès")
         else:
             logger.info("Échec de la mise à jour, ancien index conservé")
+        return success
