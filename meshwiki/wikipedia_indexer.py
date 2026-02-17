@@ -708,9 +708,21 @@ def index_zim(
             else:
                 # Local-only mode
                 local_model = _get_local_model()
-                batch_embeddings = local_model.encode(
-                    batch_docs, batch_size=64, show_progress_bar=False,
-                ).tolist()
+                local_batch_size = 64
+                SUB_BAR_W = 10
+                total_sb = (len(batch_docs) + local_batch_size - 1) // local_batch_size
+                batch_embeddings = []
+                for sb_idx in range(0, len(batch_docs), local_batch_size):
+                    sb_docs = batch_docs[sb_idx : sb_idx + local_batch_size]
+                    sb_embs = local_model.encode(
+                        sb_docs, batch_size=local_batch_size, show_progress_bar=False,
+                    ).tolist()
+                    batch_embeddings.extend(sb_embs)
+                    done = sb_idx // local_batch_size + 1
+                    pct = done / total_sb * 100 if total_sb else 0
+                    progress.set_sub_progress(
+                        "Embedding local : Batch %d/%d [%s]" % (done, total_sb, format_bar(pct, SUB_BAR_W))
+                    )
 
             progress.set_info("")
             progress.set_sub_progress("")
