@@ -568,6 +568,7 @@ def index_zim(
                     metadatas=w_metadatas,
                 )
                 _progress_fn(w_entry_idx, w_art, w_chunk)
+                progress.set_info("")
             except Exception as e:
                 logger.error("Writer error: %s", e)
                 writer_error.append(e)
@@ -627,7 +628,7 @@ def index_zim(
                     r_pct = r / total_sb * 100 if total_sb else 0
                     l_pct = l / total_sb * 100 if total_sb else 0
                     progress.set_sub_progress(
-                        "  Embedding distant : Batch %d/%d [%s] | Embedding local : Batch %d/%d [%s]"
+                        "Embedding distant : Batch %d/%d [%s] | Embedding local : Batch %d/%d [%s]"
                         % (r, total_sb, format_bar(r_pct, SUB_BAR_W),
                            l, total_sb, format_bar(l_pct, SUB_BAR_W))
                     )
@@ -687,7 +688,7 @@ def index_zim(
                 def _on_remote_sub_batch(done: int, total: int):
                     pct = done / total * 100 if total else 0
                     progress.set_sub_progress(
-                        "  Embedding distant : Batch %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
+                        "Embedding distant : Batch %d/%d [%s]" % (done, total, format_bar(pct, SUB_BAR_W))
                     )
 
                 def _remote_batch(texts):

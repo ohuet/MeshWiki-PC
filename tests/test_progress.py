@@ -57,11 +57,18 @@ def test_set_progress_zero_and_hundred():
 
 
 def test_set_info_formats_message():
-    """Info line uses the ── prefix."""
+    """Info line uses the ' > ' prefix."""
     display = ProgressDisplay()
     display.set_info("Encodage et insertion de 5000 chunks...")
-    assert display._info_line.startswith("\u2500\u2500 ")
+    assert display._info_line.startswith(" > ")
     assert "5000 chunks" in display._info_line
+
+
+def test_set_info_empty_shows_prefix():
+    """Empty info line still shows ' > ' prefix."""
+    display = ProgressDisplay()
+    display.set_info("")
+    assert display._info_line == " > "
 
 
 def test_handler_integration():
@@ -123,10 +130,18 @@ def test_stop_without_start():
 
 
 def test_set_sub_progress():
-    """Sub-progress line is stored and included in redraws."""
+    """Sub-progress line is stored with ' > ' prefix."""
     display = ProgressDisplay()
-    display.set_sub_progress("  Distant 3/10 [███░░░░░░░]")
+    display.set_sub_progress("Distant 3/10 [███░░░░░░░]")
+    assert display._sub_progress_line.startswith(" > ")
     assert "Distant 3/10" in display._sub_progress_line
+
+
+def test_set_sub_progress_empty_shows_prefix():
+    """Empty sub-progress line still shows ' > ' prefix."""
+    display = ProgressDisplay()
+    display.set_sub_progress("")
+    assert display._sub_progress_line == " > "
 
 
 def test_format_bar():

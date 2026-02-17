@@ -104,13 +104,13 @@ class ProgressDisplay:
 
     def set_info(self, message: str):
         """Update the info line (top fixed line)."""
-        self._info_line = f"\u2500\u2500 {message}"
+        self._info_line = f" > {message}" if message else " > "
         if self._active:
             self._redraw()
 
     def set_sub_progress(self, message: str):
         """Update the sub-progress line (middle fixed line)."""
-        self._sub_progress_line = message
+        self._sub_progress_line = f" > {message}" if message else " > "
         if self._active:
             self._redraw()
 
