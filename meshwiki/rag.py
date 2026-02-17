@@ -146,10 +146,13 @@ def query(question: str) -> str:
 
     logger.info("Search: %d/%d chunks kept (distance <= %.2f)", len(filtered), len(documents), max_distance)
 
-    # Try each chunk individually until the LLM finds an answer
-    for i, (doc, meta, dist) in enumerate(filtered):
-        title = meta.get("title", "")
-        context = f"[{title}] {doc}"
+    # Try chunks in groups of 3 until the LLM finds an answer
+    group_size = 3
+    for start in range(0, len(filtered), group_size):
+        group = filtered[start:start + group_size]
+        context_parts = [f"[{meta.get('title', '')}] {doc}" for doc, meta, dist in group]
+        context = "\n\n".join(context_parts)
+        titles = [meta.get("title", "?") for _, meta, _ in group]
 
         user_prompt = f"""Extraits Wikipedia pertinents :
 ---
@@ -162,11 +165,12 @@ Réponds de façon concise. Utilise toute information pertinente, même nuancée
 
         response = llm.generate(SYSTEM_PROMPT, user_prompt)
 
+        group_label = f"{start + 1}-{start + len(group)}/{len(filtered)}"
         if not _is_no_answer(response):
-            logger.info("Réponse trouvée au chunk %d/%d [%s]", i + 1, len(filtered), title)
+            logger.info("Réponse trouvée aux chunks %s %s", group_label, titles)
             return response
 
-        logger.info("Chunk %d/%d [%s] : pas de réponse", i + 1, len(filtered), title)
+        logger.info("Chunks %s %s : pas de réponse", group_label, titles)
 
     # All chunks exhausted — try Kiwix cascade
     if kiwix_search.has_zim_paths():
