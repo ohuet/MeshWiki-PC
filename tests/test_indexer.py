@@ -506,8 +506,9 @@ def test_eta_uses_configured_timezone(mock_set_eta, mock_chromadb, mock_config, 
 @patch("meshwiki.wikipedia_indexer._collect_titles")
 @patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
+@patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
 def test_index_all_zims_resumes_with_callback(
-    mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
+    mock_cp_file, mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
 ):
     """index_all_zims passes on_progress and resume_from to index_zim on resume."""
     mock_config.return_value = {
@@ -565,8 +566,9 @@ def test_index_all_zims_resumes_with_callback(
 @patch("meshwiki.wikipedia_indexer._collect_titles")
 @patch("meshwiki.config.load_config")
 @patch("meshwiki.wikipedia_indexer.chromadb")
+@patch("meshwiki.wikipedia_indexer.CHECKPOINT_FILE")
 def test_index_all_zims_fresh_start(
-    mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
+    mock_cp_file, mock_chromadb, mock_config, mock_collect, mock_save_multi, mock_load_multi, mock_index_zim,
 ):
     """index_all_zims deletes collection and passes no resume_from on fresh start."""
     mock_config.return_value = {
