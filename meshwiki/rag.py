@@ -17,7 +17,9 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
+Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
+Réponds "Je ne sais pas." UNIQUEMENT si l'extrait n'a aucun rapport avec la question.
+Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
 La base Wikipedia est en cours d'initialisation.
@@ -31,7 +33,9 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
+Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
+Réponds "Je ne sais pas." UNIQUEMENT si l'extrait n'a aucun rapport avec la question.
+Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_DATA = """Tu es un assistant encyclopédique sur l'île de La Réunion.
 Tu ne disposes PAS d'extraits Wikipedia pour le moment.
@@ -44,7 +48,9 @@ Tes réponses doivent être :
 - Concises (max 400 caractères si possible, car transmises par radio)
 - Factuelles et précises
 - En français
-IMPORTANT : Si les extraits ne contiennent PAS d'éléments permettant de répondre, réponds exactement "Je n'ai pas trouvé cette information." Ne complète JAMAIS avec tes propres connaissances."""
+Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
+Réponds "Je ne sais pas." UNIQUEMENT si l'extrait n'a aucun rapport avec la question.
+Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_LLM_OPINION = """Tu es un assistant encyclopédique. L'information n'a PAS été trouvée dans la base Wikipedia locale.
 Réponds avec tes connaissances générales.
@@ -152,7 +158,7 @@ def query(question: str) -> str:
 
 Question : {question}
 
-Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
 
         response = llm.generate(SYSTEM_PROMPT, user_prompt)
 
@@ -208,7 +214,7 @@ def _kiwix_cascade(question: str, system_prompt: str, suffix: str) -> str | None
 
 Question : {question}
 
-Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
 
     response = llm.generate(system_prompt, user_prompt)
     if not _is_no_answer(response):
@@ -227,7 +233,7 @@ Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis 
 
 Question : {question}
 
-Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
+Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
 
         response = llm.generate(system_prompt, user_prompt)
         if not _is_no_answer(response):
