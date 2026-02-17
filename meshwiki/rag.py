@@ -144,10 +144,22 @@ def query(question: str) -> str:
         logger.info("No relevant chunks found (best distance: %.3f)", distances[0] if distances else -1)
         return "Aucun article pertinent trouvé pour cette question."
 
+    # Deduplicate: max 2 chunks per article to ensure diversity
+    max_per_article = 2
+    title_counts: dict[str, int] = {}
+    deduplicated = []
+    for item in filtered:
+        title = item[1].get("title", "")
+        count = title_counts.get(title, 0)
+        if count < max_per_article:
+            deduplicated.append(item)
+            title_counts[title] = count + 1
+    filtered = deduplicated
+
     logger.info("Search: %d/%d chunks kept (distance <= %.2f)", len(filtered), len(documents), max_distance)
 
-    # Try chunks in groups of 3 until the LLM finds an answer
-    group_size = 3
+    # Try chunks in groups of 4 until the LLM finds an answer
+    group_size = 4
     for start in range(0, len(filtered), group_size):
         group = filtered[start:start + group_size]
         context_parts = [f"[{meta.get('title', '')}] {doc}" for doc, meta, dist in group]
