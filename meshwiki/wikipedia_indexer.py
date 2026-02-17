@@ -584,6 +584,7 @@ def index_zim(
         batch = batch_queue.get()
         if batch is None:
             break
+        progress.set_info("")
 
         if writer_error:
             break
@@ -711,6 +712,7 @@ def index_zim(
                     batch_docs, batch_size=64, show_progress_bar=False,
                 ).tolist()
 
+            progress.set_info("")
             progress.set_sub_progress("")
 
             write_queue.put((
