@@ -62,7 +62,7 @@ def _get_model():
         embeddings_config = cfg["embeddings"]
         model_name = embeddings_config["model"]
         truncate_dim = embeddings_config.get("truncate_dim")
-        model_kwargs = {"torch_dtype": "float16"}
+        model_kwargs = {"dtype": "float16"}
         try:
             _model = SentenceTransformer(
                 model_name, truncate_dim=truncate_dim, local_files_only=True,
@@ -140,15 +140,12 @@ def query(question: str) -> str:
 
     logger.info("Search: %d/%d chunks kept (distance <= %.2f)", len(filtered), len(documents), max_distance)
 
-    # Build context from retrieved chunks
-    context_parts = []
-    for doc, meta, dist in filtered:
+    # Try each chunk individually until the LLM finds an answer
+    for i, (doc, meta, dist) in enumerate(filtered):
         title = meta.get("title", "")
-        context_parts.append(f"[{title}] {doc}")
+        context = f"[{title}] {doc}"
 
-    context = "\n\n".join(context_parts)
-
-    user_prompt = f"""Extraits Wikipedia pertinents :
+        user_prompt = f"""Extraits Wikipedia pertinents :
 ---
 {context}
 ---
@@ -157,7 +154,24 @@ Question : {question}
 
 Réponds de façon concise. Si les extraits ne contiennent pas la réponse, dis "Je ne sais pas"."""
 
-    return llm.generate(SYSTEM_PROMPT, user_prompt)
+        response = llm.generate(SYSTEM_PROMPT, user_prompt)
+
+        if not _is_no_answer(response):
+            logger.info("Réponse trouvée au chunk %d/%d [%s]", i + 1, len(filtered), title)
+            return response
+
+        logger.info("Chunk %d/%d [%s] : pas de réponse", i + 1, len(filtered), title)
+
+    # All chunks exhausted — try Kiwix cascade
+    if kiwix_search.has_zim_paths():
+        logger.info("Aucun chunk ChromaDB concluant, tentative Kiwix...")
+        kiwix_result = _kiwix_cascade(
+            question, SYSTEM_PROMPT_KIWIX_PERMANENT, "[Recherche textuelle Kiwix]"
+        )
+        if kiwix_result is not None:
+            return kiwix_result
+
+    return response
 
 
 def query_without_context(question: str, eta_str: str) -> str:

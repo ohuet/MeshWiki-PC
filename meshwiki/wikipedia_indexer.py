@@ -356,7 +356,7 @@ def index_zim(
 
     model_name = embeddings_config["model"]
     truncate_dim = embeddings_config.get("truncate_dim")
-    model_kwargs = {"torch_dtype": "float16"}
+    model_kwargs = {"dtype": "float16"}
 
     remote_configured = remote_embeddings.is_configured(cfg)
     _local_model = None
