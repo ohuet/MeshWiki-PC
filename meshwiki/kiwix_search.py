@@ -99,6 +99,30 @@ def _get_archives() -> list[tuple[str, object]]:
     return result
 
 
+def _strip_displaystyle(text: str) -> str:
+    r"""Remove LaTeX {\displaystyle ...} blocks, handling nested braces."""
+    marker = r"{\displaystyle "
+    result: list[str] = []
+    i = 0
+    while i < len(text):
+        pos = text.find(marker, i)
+        if pos == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:pos])
+        # Skip past the opening brace of {\displaystyle
+        depth = 1
+        j = pos + 1  # just after the '{'
+        while j < len(text) and depth > 0:
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+            j += 1
+        i = j
+    return "".join(result)
+
+
 def _clean_html(raw_html: str) -> str:
     """Extract plain text from HTML, removing tags, entities, and extra whitespace."""
     text = re.sub(r"<script[^>]*>.*?</script>", " ", raw_html, flags=re.DOTALL)
@@ -127,6 +151,10 @@ def _clean_html(raw_html: str) -> str:
     text = re.sub(r"Mise en garde médicale", "", text)
     # Remove hatnote text at the start ("Pour ..., voir ...")
     text = re.sub(r"^Pour (?:le |la |les |l['']).+?, voir .+?\.\s*", "", text)
+    # Strip the Kiwix/Wikipedia license footer
+    text = re.sub(r"\s*Cet article est issu de Wikipédia\..*$", "", text)
+    # Strip LaTeX {\displaystyle ...} blocks
+    text = _strip_displaystyle(text)
     # Final whitespace cleanup
     text = re.sub(r"\s+", " ", text).strip()
     return text
