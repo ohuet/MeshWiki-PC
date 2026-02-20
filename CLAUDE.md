@@ -70,7 +70,7 @@ All user-facing messages (responses, errors, rate limit denials) are in **French
 
 ## Synchronisation avec la version Android
 
-Le projet existe en deux versions : Python (ce repo) et Android (`MeshWiki Android`). Sauf mention contraire, toute modification d'un prompt LLM (system prompt, user prompt) doit être répercutée dans les deux versions. Les prompts se trouvent dans :
+Le projet existe en deux versions : Python (ce repo) et Android (dossier `D:\Perso\SideProjects\MeshWiki Android`). Sauf mention contraire, toute modification d'un prompt LLM (system prompt, user prompt) doit être répercutée dans les deux versions. Les prompts se trouvent dans :
 - **Python** : `meshwiki/rag.py` (SYSTEM_PROMPT, SYSTEM_PROMPT_KIWIX, SYSTEM_PROMPT_KIWIX_PERMANENT)
 - **Android** : `app/src/main/java/com/meshwiki/rag/RagEngine.kt` (SYSTEM_PROMPT, SYSTEM_PROMPT_KIWIX)
 
