@@ -74,6 +74,14 @@ Le projet existe en deux versions : Python (ce repo) et Android (dossier `D:\Per
 - **Python** : `meshwiki/rag.py` (SYSTEM_PROMPT, SYSTEM_PROMPT_KIWIX, SYSTEM_PROMPT_KIWIX_PERMANENT)
 - **Android** : `app/src/main/java/com/meshwiki/rag/RagEngine.kt` (SYSTEM_PROMPT, SYSTEM_PROMPT_KIWIX)
 
+Toute modification du prompt de génération d'expressions de recherche doit être répercutée. Les fonctions se trouvent dans :
+- **Python** : `meshwiki/rag.py` (`_llm_search_expressions`, `SYSTEM_PROMPT_KEYWORDS`)
+- **Android** : `app/src/main/java/com/meshwiki/rag/RagEngine.kt` (`generateSearchExpressions`, `SYSTEM_PROMPT_KEYWORDS`)
+
+Toute modification des filtres de nettoyage de contenu (HTML/texte) doit aussi être répercutée. Les filtres se trouvent dans :
+- **Python** : `meshwiki/kiwix_search.py` (`_clean_html`), `meshwiki/wikipedia_indexer.py` (`_clean_html`)
+- **Android** : `app/src/main/java/com/meshwiki/wikipedia/ZimReader.kt` (`stripHtml`), `app/src/main/java/com/meshwiki/wikipedia/KiwixSearch.kt`
+
 ## Commit Message Format
 
 ```

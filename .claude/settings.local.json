@@ -42,7 +42,8 @@
       "mcp__browsermcp__browser_navigate",
       "Bash(python3:*)",
       "Bash(set:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(git push:*)"
     ]
   }
 }

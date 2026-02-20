@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections import OrderedDict
 from pathlib import Path
 
 import chromadb
@@ -66,6 +67,15 @@ SYSTEM_PROMPT_LLM_OPINION = """Tu es un assistant encyclopédique. L'information
 Réponds avec tes connaissances générales.
 Ta réponse doit être concise (max 400 caractères, transmission radio)."""
 
+SYSTEM_PROMPT_KEYWORDS = """Tu es un moteur de recherche. Donne UNIQUEMENT une liste d'expressions de recherche Wikipedia (1 à 4, une par ligne). Pas d'explication, pas de numérotation."""
+
+# Known French error messages returned by llm.generate() on failure
+_LLM_ERROR_MESSAGES = (
+    "Erreur : le modèle LLM n'a pas répondu à temps.",
+    "Service LLM indisponible.",
+    "Erreur lors de la génération de la réponse.",
+)
+
 _RE_WIKI_REFS = re.compile(r"\[(?:\d+|Notes?\s*\d+)\]")
 
 _model = None
@@ -116,8 +126,28 @@ def reset_collection() -> None:
 def query(question: str) -> str:
     """Answer a question using semantic search over Wikipedia + LLM.
 
+    When use_llm_for_kiwix_keywords is enabled, tries LLM-assisted Kiwix
+    search first, then falls back to ChromaDB semantic search.
+
     Returns the LLM-generated answer or an error message in French.
     """
+    # If LLM-assisted Kiwix search is enabled, try it first
+    try:
+        cfg = config.load_config()
+        use_llm_kiwix = cfg.get("rag", {}).get("use_llm_for_kiwix_keywords", True)
+    except Exception:
+        use_llm_kiwix = False
+    tried_llm_kiwix = False
+
+    if use_llm_kiwix and kiwix_search.has_zim_paths():
+        tried_llm_kiwix = True
+        llm_result = _llm_assisted_kiwix_search(
+            question, SYSTEM_PROMPT_KIWIX_PERMANENT, "[Recherche textuelle Kiwix]"
+        )
+        if llm_result is not None:
+            return llm_result
+        logger.info("Recherche Kiwix assistée LLM non concluante, tentative ChromaDB...")
+
     try:
         model = _get_model()
         collection = _get_collection()
@@ -199,11 +229,12 @@ Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la que
 
         logger.info("Chunks %s %s : pas de réponse", group_label, titles)
 
-    # All chunks exhausted — try Kiwix cascade
+    # All chunks exhausted — try Kiwix cascade (skip LLM path if already tried)
     if kiwix_search.has_zim_paths():
         logger.info("Aucun chunk ChromaDB concluant, tentative Kiwix...")
         kiwix_result = _kiwix_cascade(
-            question, SYSTEM_PROMPT_KIWIX_PERMANENT, "[Recherche textuelle Kiwix]"
+            question, SYSTEM_PROMPT_KIWIX_PERMANENT, "[Recherche textuelle Kiwix]",
+            skip_llm=tried_llm_kiwix,
         )
         if kiwix_result is not None:
             return kiwix_result
@@ -225,17 +256,15 @@ def _is_no_answer(response: str) -> bool:
     return "je n'ai pas trouvé" in lower or "je ne sais pas" in lower
 
 
-def _kiwix_cascade(question: str, system_prompt: str, suffix: str) -> str | None:
-    """Cascade Kiwix search: long extracts → full articles → LLM opinion.
+def _try_kiwix_articles(results: list[dict], question: str, system_prompt: str, suffix: str) -> str | None:
+    """Try to answer a question from a list of Kiwix search results.
 
-    Returns the LLM answer with appropriate suffix/prefix, or None if
-    Kiwix returned no results at all.
+    Step 1: All articles together (long extracts) → LLM.
+    Steps 2-N: Each article individually (full content) → LLM.
+
+    Returns the answer with suffix, or None if all attempts say "je ne sais pas".
     """
-    results = kiwix_search.search(question, max_chars_per_result=4000)
-    if not results:
-        return None
-
-    # Step 1: Try with long extracts
+    # Step 1: Try with long extracts from all articles
     context_parts = [f"[{r['title']}] {r['content']}" for r in results]
     context = "\n\n".join(context_parts)
     user_prompt = f"""Extraits Wikipedia pertinents :
@@ -251,7 +280,7 @@ Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la que
     if not _is_no_answer(response):
         return f"{response} {suffix}"
 
-    # Steps 2-4: Try each full article individually
+    # Steps 2-N: Try each full article individually
     for r in results:
         full_content = kiwix_search.get_article_content(r["title"])
         if not full_content:
@@ -270,7 +299,126 @@ Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la que
         if not _is_no_answer(response):
             return f"{response} {suffix}"
 
-    # Step 5: LLM opinion with general knowledge
+    return None
+
+
+def _llm_search_expressions(question: str) -> list[str]:
+    """Ask the LLM to generate 1-4 search expressions for a question.
+
+    Returns an empty list if the LLM fails or returns an error.
+    """
+    user_prompt = f"Expressions de recherche pour : {question}"
+    logger.info("Génération d'expressions de recherche LLM pour : %r", question)
+    response = llm.generate(SYSTEM_PROMPT_KEYWORDS, user_prompt, max_tokens=100)
+
+    # Check for known error messages
+    if response in _LLM_ERROR_MESSAGES:
+        logger.warning("LLM error generating search expressions: %s", response)
+        return []
+
+    logger.info("Réponse brute du LLM : %r", response)
+
+    # Parse: split lines, strip, clean numbering prefixes, filter empty
+    expressions = []
+    for line in response.split("\n"):
+        line = line.strip()
+        # Remove numbering like "1. ", "2) ", "- ", "• "
+        line = re.sub(r"^(?:\d+[.\)]\s*|[-•]\s*)", "", line).strip()
+        if line:
+            expressions.append(line)
+
+    # Limit to 4 expressions
+    expressions = expressions[:4]
+
+    logger.info("Expressions retenues : %s", expressions)
+    return expressions
+
+
+def _llm_assisted_kiwix_search(question: str, system_prompt: str, suffix: str) -> str | None:
+    """LLM-assisted Kiwix search: generate expressions, Phase 1/2.
+
+    Asks the LLM to generate search expressions, searches Kiwix for each,
+    and uses a two-phase strategy with deduplication.
+
+    Returns the answer with suffix, or None if all phases fail or no
+    expressions were generated. Does NOT fall back to LLM opinion.
+    """
+    expressions = _llm_search_expressions(question)
+    if not expressions:
+        return None
+
+    # Search each expression
+    all_results: OrderedDict[str, list[dict]] = OrderedDict()
+    for expr in expressions:
+        results = kiwix_search.search(expr, num_results=3, max_chars_per_result=4000)
+        all_results[expr] = results
+        titles = [r["title"] for r in results]
+        logger.info("Recherche Kiwix %r → %d résultats : %s", expr, len(results), titles)
+
+    seen_titles: set[str] = set()
+
+    # Phase 1: best unique article from each expression
+    phase1: list[dict] = []
+    for expr, results in all_results.items():
+        for r in results:
+            if r["title"] not in seen_titles:
+                seen_titles.add(r["title"])
+                phase1.append(r)
+                break
+
+    if phase1:
+        logger.info("Phase 1: %d articles from %d expressions", len(phase1), len(expressions))
+        result = _try_kiwix_articles(phase1, question, system_prompt, suffix)
+        if result is not None:
+            return result
+
+    # Phase 2: remaining articles from each expression
+    for expr, results in all_results.items():
+        remaining = [r for r in results if r["title"] not in seen_titles]
+        if remaining:
+            for r in remaining:
+                seen_titles.add(r["title"])
+            logger.info("Phase 2 (%s): %d remaining articles", expr, len(remaining))
+            result = _try_kiwix_articles(remaining, question, system_prompt, suffix)
+            if result is not None:
+                return result
+
+    return None
+
+
+def _kiwix_cascade(question: str, system_prompt: str, suffix: str, skip_llm: bool = False) -> str | None:
+    """Cascade Kiwix search: LLM expressions → Phase 1/2 → plain search → LLM opinion.
+
+    When use_llm_for_kiwix_keywords is enabled and skip_llm is False, uses
+    LLM-assisted search with a two-phase strategy and deduplication.
+    Falls back to plain Kiwix search if disabled, skipped, or expressions fail.
+
+    Returns the LLM answer with appropriate suffix/prefix, or None if
+    Kiwix returned no results at all.
+    """
+    if not skip_llm:
+        cfg = config.load_config()
+        use_llm = cfg.get("rag", {}).get("use_llm_for_kiwix_keywords", True)
+
+        if use_llm and kiwix_search.has_zim_paths():
+            result = _llm_assisted_kiwix_search(question, system_prompt, suffix)
+            if result is not None:
+                return result
+
+            # All LLM phases exhausted → LLM opinion
+            user_prompt = f"Question : {question}\n\nRéponds de façon concise."
+            response = llm.generate(SYSTEM_PROMPT_LLM_OPINION, user_prompt)
+            return f"Réponse non trouvée dans la base. Mon avis : {response}"
+
+    # Fallback: plain Kiwix search (option disabled, skipped, or no expressions)
+    results = kiwix_search.search(question, max_chars_per_result=4000)
+    if not results:
+        return None
+
+    result = _try_kiwix_articles(results, question, system_prompt, suffix)
+    if result is not None:
+        return result
+
     user_prompt = f"Question : {question}\n\nRéponds de façon concise."
     response = llm.generate(SYSTEM_PROMPT_LLM_OPINION, user_prompt)
     return f"Réponse non trouvée dans la base. Mon avis : {response}"

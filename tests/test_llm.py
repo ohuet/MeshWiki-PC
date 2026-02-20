@@ -84,3 +84,18 @@ def test_payload_structure(mock_post, mock_config):
     assert payload["prompt"] == "user prompt"
     assert payload["options"]["temperature"] == 0.1
     assert payload["options"]["num_predict"] == 300
+
+
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch("meshwiki.llm.requests.post")
+def test_generate_custom_max_tokens(mock_post, mock_config):
+    """max_tokens parameter overrides num_predict from config."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"response": "ok"}
+    mock_response.raise_for_status = MagicMock()
+    mock_post.return_value = mock_response
+
+    generate("sys", "user", max_tokens=100)
+
+    payload = mock_post.call_args[1]["json"]
+    assert payload["options"]["num_predict"] == 100

@@ -33,6 +33,7 @@ embeddings:
 
 rag:
   max_distance: 0.60            # seuil de distance cosinus max (0=identique, 1=opposé)
+  use_llm_for_kiwix_keywords: true  # utiliser le LLM pour générer des expressions de recherche Kiwix
 
 vectordb:
   path: "./data/chroma_db"

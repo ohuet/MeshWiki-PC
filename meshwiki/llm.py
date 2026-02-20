@@ -9,8 +9,13 @@ from meshwiki import config
 logger = logging.getLogger(__name__)
 
 
-def generate(system_prompt: str, user_prompt: str) -> str:
+def generate(system_prompt: str, user_prompt: str, *, max_tokens: int | None = None) -> str:
     """Send a prompt to Ollama and return the generated text.
+
+    Args:
+        system_prompt: System prompt setting the assistant's behavior.
+        user_prompt: User's question or input.
+        max_tokens: If provided, overrides the default num_predict from config.
 
     Returns a French error message if Ollama is unavailable.
     """
@@ -25,7 +30,7 @@ def generate(system_prompt: str, user_prompt: str) -> str:
         "stream": False,
         "options": {
             "temperature": ollama["temperature"],
-            "num_predict": ollama["max_tokens"],
+            "num_predict": max_tokens if max_tokens is not None else ollama["max_tokens"],
         },
     }
 
