@@ -22,7 +22,7 @@ Tes réponses doivent être :
 IMPORTANT : Lis TOUS les extraits avant de répondre. Choisis celui qui répond le MIEUX à la question.
 Si la question porte sur un traitement ou remède, choisis l'extrait qui propose une solution, pas celui qui mentionne le symptôme comme effet secondaire.
 Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
-Réponds "Je ne sais pas." UNIQUEMENT si aucun extrait n'a de rapport avec la question.
+INTERDIT : Ne réponds JAMAIS "Non" ou "Ce n'est pas le cas" si aucun extrait ne le dit explicitement. Si les extraits ne parlent pas du sujet, réponds "Je ne sais pas."
 Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_INDEX = """Tu es un assistant encyclopédique sur l'île de La Réunion.
@@ -41,7 +41,7 @@ Tes réponses doivent être :
 IMPORTANT : Lis TOUS les extraits avant de répondre. Choisis celui qui répond le MIEUX à la question.
 Si la question porte sur un traitement ou remède, choisis l'extrait qui propose une solution, pas celui qui mentionne le symptôme comme effet secondaire.
 Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
-Réponds "Je ne sais pas." UNIQUEMENT si aucun extrait n'a de rapport avec la question.
+INTERDIT : Ne réponds JAMAIS "Non" ou "Ce n'est pas le cas" si aucun extrait ne le dit explicitement. Si les extraits ne parlent pas du sujet, réponds "Je ne sais pas."
 Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_NO_DATA = """Tu es un assistant encyclopédique sur l'île de La Réunion.
@@ -59,7 +59,7 @@ Tes réponses doivent être :
 IMPORTANT : Lis TOUS les extraits avant de répondre. Choisis celui qui répond le MIEUX à la question.
 Si la question porte sur un traitement ou remède, choisis l'extrait qui propose une solution, pas celui qui mentionne le symptôme comme effet secondaire.
 Si l'extrait contient des éléments de réponse, même partiels ou nuancés, utilise-les.
-Réponds "Je ne sais pas." UNIQUEMENT si aucun extrait n'a de rapport avec la question.
+INTERDIT : Ne réponds JAMAIS "Non" ou "Ce n'est pas le cas" si aucun extrait ne le dit explicitement. Si les extraits ne parlent pas du sujet, réponds "Je ne sais pas."
 Ne complète JAMAIS avec tes propres connaissances."""
 
 SYSTEM_PROMPT_LLM_OPINION = """Tu es un assistant encyclopédique. L'information n'a PAS été trouvée dans la base Wikipedia locale.
@@ -188,7 +188,7 @@ def query(question: str) -> str:
 
 Question : {question}
 
-Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
+Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la question, réponds "Je ne sais pas." Ne réponds jamais "Non" à partir d'extraits qui ne mentionnent pas le sujet."""
 
         response = llm.generate(SYSTEM_PROMPT, user_prompt)
 
@@ -245,7 +245,7 @@ def _kiwix_cascade(question: str, system_prompt: str, suffix: str) -> str | None
 
 Question : {question}
 
-Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
+Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la question, réponds "Je ne sais pas." Ne réponds jamais "Non" à partir d'extraits qui ne mentionnent pas le sujet."""
 
     response = llm.generate(system_prompt, user_prompt)
     if not _is_no_answer(response):
@@ -264,7 +264,7 @@ Réponds de façon concise. Utilise toute information pertinente, même nuancée
 
 Question : {question}
 
-Réponds de façon concise. Utilise toute information pertinente, même nuancée. Dis "Je ne sais pas" uniquement si l'extrait n'a aucun rapport."""
+Réponds de façon concise. Si aucun extrait ne parle du sujet précis de la question, réponds "Je ne sais pas." Ne réponds jamais "Non" à partir d'extraits qui ne mentionnent pas le sujet."""
 
         response = llm.generate(system_prompt, user_prompt)
         if not _is_no_answer(response):
