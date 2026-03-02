@@ -646,7 +646,7 @@ def test_kiwix_cascade_falls_back_when_disabled(mock_kiwix, mock_llm, mock_confi
         assert kwargs.get("max_tokens") is None
 
 
-# --- query() with LLM-assisted Kiwix search tests ---
+# --- query() with Kiwix cascade fallback tests ---
 
 
 @patch.object(rag_module, "_collection", None)
@@ -656,31 +656,48 @@ def test_kiwix_cascade_falls_back_when_disabled(mock_kiwix, mock_llm, mock_confi
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
 @patch("meshwiki.config.load_config")
-def test_query_tries_llm_kiwix_first_when_enabled(
+def test_query_falls_back_to_kiwix_when_chromadb_fails(
     mock_config, mock_chromadb, mock_st, mock_kiwix, mock_llm
 ):
-    """When use_llm_for_kiwix_keywords is true, query() tries LLM-assisted Kiwix before ChromaDB."""
+    """When ChromaDB has no relevant chunks, query() falls back to Kiwix cascade."""
     mock_config.return_value = {
         "embeddings": {"model": "test-model"},
         "vectordb": {"path": "./test_db"},
         "rag": {"use_llm_for_kiwix_keywords": True},
     }
     mock_kiwix.has_zim_paths.return_value = True
+
+    # ChromaDB setup — returns results but all too distant
+    mock_model = MagicMock()
+    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
+    mock_st.return_value = mock_model
+
+    mock_collection = MagicMock()
+    mock_collection.query.return_value = {
+        "documents": [["Some irrelevant content"]],
+        "metadatas": [[{"title": "Irrelevant"}]],
+        "distances": [[0.85]],
+    }
+    mock_client = MagicMock()
+    mock_client.get_collection.return_value = mock_collection
+    mock_chromadb.PersistentClient.return_value = mock_client
+
+    # Kiwix cascade: LLM-assisted finds answer
     mock_kiwix.search.return_value = [
         {"title": "Piton", "content": "Le Piton culmine à 3070m."},
     ]
 
     mock_llm.generate.side_effect = [
-        "Piton de la Fournaise",          # expressions
-        "Le Piton culmine à 3070m.",      # phase 1 answer
+        "Piton des Neiges",               # LLM expressions
+        "Le Piton culmine à 3070m.",       # phase 1 answer
     ]
 
     result = rag_module.query("Altitude du Piton ?")
 
     assert "3070" in result
     assert "[Recherche textuelle Kiwix]" in result
-    # ChromaDB should NOT have been queried
-    mock_chromadb.PersistentClient.assert_not_called()
+    # ChromaDB was queried first
+    mock_collection.query.assert_called_once()
 
 
 @patch.object(rag_module, "_collection", None)
@@ -690,44 +707,46 @@ def test_query_tries_llm_kiwix_first_when_enabled(
 @patch("meshwiki.rag.SentenceTransformer")
 @patch("meshwiki.rag.chromadb")
 @patch("meshwiki.config.load_config")
-def test_query_falls_back_to_chromadb_when_llm_kiwix_fails(
+def test_query_chromadb_first_then_kiwix_cascade(
     mock_config, mock_chromadb, mock_st, mock_kiwix, mock_llm
 ):
-    """When LLM-assisted Kiwix search fails, query() falls back to ChromaDB."""
+    """ChromaDB is tried first; when all chunks fail, Kiwix cascade is used."""
     mock_config.return_value = {
         "embeddings": {"model": "test-model"},
         "vectordb": {"path": "./test_db"},
         "rag": {"use_llm_for_kiwix_keywords": True, "max_distance": 0.60},
     }
     mock_kiwix.has_zim_paths.return_value = True
-    mock_kiwix.search.return_value = [
-        {"title": "SomeArticle", "content": "Unrelated content."},
-    ]
-    mock_kiwix.get_article_content.return_value = None
 
-    # ChromaDB setup
+    # ChromaDB setup — relevant chunks but LLM can't answer from them
     mock_model = MagicMock()
     mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 1024)
     mock_st.return_value = mock_model
 
     mock_collection = MagicMock()
     mock_collection.query.return_value = {
-        "documents": [["Paris est la capitale de la France."]],
-        "metadatas": [[{"title": "Paris"}]],
-        "distances": [[0.15]],
+        "documents": [["Some partial info about volcanoes"]],
+        "metadatas": [[{"title": "Volcanisme"}]],
+        "distances": [[0.30]],
     }
     mock_client = MagicMock()
     mock_client.get_collection.return_value = mock_collection
     mock_chromadb.PersistentClient.return_value = mock_client
 
-    mock_llm.generate.side_effect = [
-        "Expression 1",            # LLM expressions
-        "Je ne sais pas.",         # LLM-assisted phase 1 fails
-        "Paris est la capitale.",  # ChromaDB answer
+    # Kiwix cascade: LLM-assisted finds answer
+    mock_kiwix.search.return_value = [
+        {"title": "Piton des Neiges", "content": "Le Piton culmine à 3070m."},
     ]
 
-    result = rag_module.query("Capitale de la France ?")
+    mock_llm.generate.side_effect = [
+        "Je ne sais pas.",                  # ChromaDB chunk fails
+        "Piton des Neiges",                 # LLM expressions
+        "Le Piton culmine à 3070m.",        # Kiwix phase 1 answer
+    ]
 
-    assert result == "Paris est la capitale."
-    # ChromaDB was queried after LLM-assisted Kiwix failed
+    result = rag_module.query("Altitude du Piton des Neiges ?")
+
+    assert "3070" in result
+    assert "[Recherche textuelle Kiwix]" in result
+    # ChromaDB was queried first, then Kiwix cascade
     mock_collection.query.assert_called_once()
