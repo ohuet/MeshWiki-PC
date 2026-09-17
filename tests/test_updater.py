@@ -201,7 +201,8 @@ def test_cleanup_removes_temp_files_but_not_zim(mock_config, tmp_path):
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 @patch("meshwiki.wikipedia_updater.requests.get")
-def test_download_replaces_old_zim_only_after_completion(mock_get, mock_file, mock_config, tmp_path):
+@patch("meshwiki.wikipedia_updater._is_valid_zim", return_value=True)
+def test_download_replaces_old_zim_only_after_completion(mock_valid, mock_get, mock_file, mock_config, tmp_path):
     """Download writes to .zim.download, then replaces the .zim atomically."""
     mock_file.exists.return_value = False
 
@@ -320,7 +321,8 @@ def test_remove_older_versions_ignores_undated_name(mock_kiwix, tmp_path):
 @patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
 @patch.object(updater_module, "LAST_UPDATE_FILE")
 @patch("meshwiki.wikipedia_updater.requests.get")
-def test_download_success_removes_previous_dump(mock_get, mock_file, mock_config, mock_kiwix, mock_discover, tmp_path):
+@patch("meshwiki.wikipedia_updater._is_valid_zim", return_value=True)
+def test_download_success_removes_previous_dump(mock_valid, mock_get, mock_file, mock_config, mock_kiwix, mock_discover, tmp_path):
     mock_file.exists.return_value = False
     _touch(tmp_path, "wikipedia_fr_all_mini_2026-02.zim")
 
@@ -359,3 +361,151 @@ def test_download_failure_keeps_previous_dump(mock_get, mock_file, mock_config, 
         assert updater.download_dump() is None
 
     assert (tmp_path / "wikipedia_fr_all_mini_2026-02.zim").exists()
+
+
+# --- Validation of the downloaded ZIM before replacing the previous one ---
+
+
+def _write_real_zim(path):
+    """Build a tiny real ZIM (with its internal checksum) at path."""
+    from libzim.writer import Creator, Hint, Item, StringProvider
+
+    class _Article(Item):
+        def get_path(self): return "A"
+        def get_title(self): return "A"
+        def get_mimetype(self): return "text/html"
+        def get_contentprovider(self): return StringProvider("<p>" + "contenu " * 2000 + "</p>")
+        def get_hints(self): return {Hint.FRONT_ARTICLE: True}
+
+    built = path.with_name("built.zim")
+    with Creator(built).config_indexing(False, "fra") as creator:
+        creator.set_mainpath("A")
+        creator.add_item(_Article())
+    built.replace(path)
+
+
+def test_is_valid_zim_accepts_intact_file(tmp_path):
+    zim = tmp_path / "wiki_2026-05.zim.download"
+    _write_real_zim(zim)
+    assert updater_module._is_valid_zim(zim) is True
+
+
+def test_is_valid_zim_rejects_corrupted_file(tmp_path):
+    zim = tmp_path / "wiki_2026-05.zim.download"
+    _write_real_zim(zim)
+    data = bytearray(zim.read_bytes())
+    middle = len(data) // 2
+    data[middle] ^= 0xFF
+    zim.write_bytes(bytes(data))
+    assert updater_module._is_valid_zim(zim) is False
+
+
+def test_is_valid_zim_rejects_non_zim(tmp_path):
+    bogus = tmp_path / "wiki_2026-05.zim.download"
+    bogus.write_bytes(b"<html>not a zim</html>")
+    assert updater_module._is_valid_zim(bogus) is False
+
+
+def test_is_valid_zim_releases_file_handle(tmp_path):
+    """The file can be renamed right after validation (Windows locks open files)."""
+    zim = tmp_path / "wiki_2026-05.zim.download"
+    _write_real_zim(zim)
+    assert updater_module._is_valid_zim(zim) is True
+    zim.replace(tmp_path / "wiki_2026-05.zim")
+
+
+def _mock_download(mock_get, payload, content_length):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-length": str(content_length)}
+    mock_response.iter_content.return_value = [payload]
+    mock_get.return_value = mock_response
+
+
+@patch("meshwiki.wikipedia_updater._is_valid_zim", return_value=False)
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_invalid_download_keeps_previous_zim(mock_get, mock_file, mock_config, mock_kiwix, mock_valid, tmp_path):
+    """A corrupt download is discarded and the previous version is untouched."""
+    mock_file.exists.return_value = False
+    _touch(tmp_path, "wikipedia_fr_all_mini_2026-02.zim")
+    _mock_download(mock_get, b"data", 4)
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        assert updater.download_dump() is None
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["wikipedia_fr_all_mini_2026-02.zim"]
+    mock_kiwix.set_zim_paths.assert_not_called()
+
+
+@patch("meshwiki.wikipedia_updater._is_valid_zim")
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_truncated_download_is_kept_for_resume(mock_get, mock_file, mock_config, mock_valid, tmp_path):
+    """Fewer bytes than announced: nothing is installed, the partial file stays resumable."""
+    mock_file.exists.return_value = False
+    _touch(tmp_path, "wikipedia_fr_all_mini_2026-02.zim")
+    _mock_download(mock_get, b"data", 1000)
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        assert updater.download_dump() is None
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "wikipedia_fr_all_mini_2026-02.zim",
+        "wikipedia_fr_all_mini_2026-05.zim.download",
+    ]
+    mock_valid.assert_not_called()
+
+
+@patch("meshwiki.wikipedia_updater._is_valid_zim", return_value=True)
+@patch("meshwiki.wikipedia_updater.discover_zims", return_value=[])
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_resume_ignored_by_server_restarts_cleanly(mock_get, mock_file, mock_config, mock_kiwix, mock_discover, mock_valid, tmp_path):
+    """Server answers 200 to a Range request: the file is rewritten, not appended, and sizes match."""
+    mock_file.exists.return_value = False
+    (tmp_path / "wikipedia_fr_all_mini_2026-05.zim.download").write_bytes(b"old-partial")
+    _mock_download(mock_get, b"full", 4)
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        result = updater.download_dump()
+
+    assert result == tmp_path / "wikipedia_fr_all_mini_2026-05.zim"
+    assert result.read_bytes() == b"full"
+
+
+@patch("meshwiki.wikipedia_updater._is_valid_zim", return_value=False)
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_416_with_invalid_file_is_discarded(mock_get, mock_file, mock_config, mock_valid, tmp_path):
+    """'Already fully downloaded' is validated too before being installed."""
+    mock_file.exists.return_value = False
+    (tmp_path / "wikipedia_fr_all_mini_2026-05.zim.download").write_bytes(b"bad")
+    mock_get.return_value = MagicMock(status_code=416)
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        assert updater.download_dump() is None
+
+    assert list(tmp_path.iterdir()) == []

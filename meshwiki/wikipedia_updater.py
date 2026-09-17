@@ -24,6 +24,31 @@ LAST_UPDATE_FILE = Path("data/last_update.json")
 _DATED_ZIM_RE = re.compile(r"^(?P<prefix>.+)_(?P<date>\d{4}-\d{2})\.zim$")
 
 
+def _is_valid_zim(path: Path) -> bool:
+    """Check that a ZIM file opens and matches its internal MD5 checksum.
+
+    Reads the whole file (about a minute for 3.5 GB).
+    """
+    from libzim.reader import Archive
+
+    logger.info("Vérification de l'intégrité de %s ...", path.name)
+    try:
+        archive = Archive(path)
+        if not archive.has_checksum:
+            logger.warning("%s ne contient pas de somme de contrôle : seule l'ouverture est vérifiée", path.name)
+            return True
+        valid = archive.check()
+    except Exception as e:
+        logger.error("Impossible d'ouvrir %s comme ZIM : %s", path.name, e)
+        return False
+    finally:
+        archive = None  # release the file handle before the caller renames the file
+
+    if not valid:
+        logger.error("Somme de contrôle invalide pour %s", path.name)
+    return valid
+
+
 def _remove_older_versions(new_zim: Path) -> None:
     """Delete older dumps of the same ZIM: identical name except an earlier date.
 
@@ -153,14 +178,15 @@ class WikipediaUpdater:
 
             if response.status_code == 416:
                 logger.info("File already fully downloaded")
-                download_path.replace(dest)
-                _remove_older_versions(dest)
-                return dest
+                return self._finalize_download(download_path, dest)
 
             response.raise_for_status()
 
-            mode = "ab" if existing_size > 0 and response.status_code == 206 else "wb"
-            total = int(response.headers.get("content-length", 0)) + existing_size
+            if response.status_code != 206:
+                existing_size = 0  # server ignored the Range header: full restart
+            mode = "ab" if existing_size > 0 else "wb"
+            content_length = response.headers.get("content-length")
+            total = int(content_length) + existing_size if content_length else 0
             downloaded = existing_size
 
             with open(download_path, mode) as f:
@@ -171,15 +197,33 @@ class WikipediaUpdater:
                         progress = (downloaded / total) * 100
                         logger.info("Download progress: %.1f%%", progress)
 
-            # Download complete — atomically replace the old ZIM
-            download_path.replace(dest)
-            logger.info("Download complete: %s", dest)
-            _remove_older_versions(dest)
-            return dest
+            if total > 0 and downloaded != total:
+                # Stream ended early: keep the partial file, the next attempt resumes it
+                logger.error("Téléchargement incomplet : %d octets reçus sur %d", downloaded, total)
+                return None
+
+            return self._finalize_download(download_path, dest)
 
         except requests.RequestException as e:
             logger.error("Download failed: %s", e)
             return None
+
+    def _finalize_download(self, download_path: Path, dest: Path) -> Path | None:
+        """Validate a finished download, then install it and remove older versions.
+
+        The previous ZIM is only deleted once the new one is complete, opens
+        with libzim and matches its internal checksum.
+        """
+        if not _is_valid_zim(download_path):
+            # Corrupt: resuming would only append to bad data, start over next time
+            download_path.unlink(missing_ok=True)
+            logger.error("ZIM téléchargé invalide, supprimé ; l'ancienne version est conservée")
+            return None
+
+        download_path.replace(dest)
+        logger.info("Download complete: %s", dest)
+        _remove_older_versions(dest)
+        return dest
 
     def reindex(self, zim_path: Path) -> bool:
         """Build a new index and safely swap it with the active one.
