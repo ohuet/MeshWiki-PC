@@ -91,34 +91,11 @@ def _index_exists(config: dict) -> bool:
     """Check if a usable ChromaDB index exists.
 
     Verifies that the collection exists, has documents, and uses
-    embeddings compatible with the current model configuration.
+    embeddings compatible with the current model configuration —
+    without loading the index, which is deferred to the first question.
     """
-    db_path = Path(collection_state.get_active_db_path())
-    if not db_path.exists():
-        return False
-
-    import chromadb
-    try:
-        client = chromadb.PersistentClient(path=str(db_path))
-        collection = client.get_collection("wikipedia")
-        if collection.count() == 0:
-            return False
-        # Verify embedding dimensions match current model
-        expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
-        if expected_dim:
-            sample = collection.peek(limit=1)
-            if len(sample["embeddings"]) > 0:
-                actual_dim = len(sample["embeddings"][0])
-                if actual_dim != expected_dim:
-                    logger.warning(
-                        "Index incompatible : dimension %d (attendu %d) — réindexation nécessaire",
-                        actual_dim, expected_dim,
-                    )
-                    return False
-        return True
-    except Exception as e:
-        logger.warning("Vérification de l'index échouée (%s): %s", db_path, e)
-        return False
+    expected_dim = config["embeddings"].get("truncate_dim") or config["embeddings"].get("embedding_dim")
+    return collection_state.index_exists(expected_dim)
 
 
 def _is_update_due(config: dict) -> bool:
@@ -372,9 +349,9 @@ def main() -> None:
 
     # Check/create index
     if not noindex:
-        logger.info("Chargement de l'index ChromaDB...")
+        logger.info("Vérification de l'index ChromaDB...")
     if not noindex and _index_exists(cfg):
-        logger.info("Index ChromaDB disponible")
+        logger.info("Index ChromaDB disponible (chargé au premier message)")
         # Update check only if --update is passed
         if _wants_update() or _wants_indexation():
             if _wants_indexation():

@@ -2,8 +2,8 @@
 
 import logging
 import re
+import threading
 from collections import OrderedDict
-from pathlib import Path
 
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -89,37 +89,43 @@ _RE_WIKI_REFS = re.compile(r"\[(?:\d+|Notes?\s*\d+)\]")
 _model = None
 _collection = None
 _force_unavailable = False
+# Serializes the lazy loads: two questions arriving together must not
+# load the embedding model or the 13 GB vector index twice.
+_load_lock = threading.Lock()
 
 
 def _get_model():
     global _model
-    if _model is None:
-        cfg = config.load_config()
-        embeddings_config = cfg["embeddings"]
-        model_name = embeddings_config["model"]
-        truncate_dim = embeddings_config.get("truncate_dim")
-        model_kwargs = {"dtype": "float16"}
-        try:
-            _model = SentenceTransformer(
-                model_name, truncate_dim=truncate_dim, local_files_only=True,
-                model_kwargs=model_kwargs,
-            )
-        except OSError:
-            logger.info("Downloading embedding model: %s (first time)", model_name)
-            _model = SentenceTransformer(
-                model_name, truncate_dim=truncate_dim,
-                model_kwargs=model_kwargs,
-            )
-    return _model
+    with _load_lock:
+        if _model is None:
+            cfg = config.load_config()
+            embeddings_config = cfg["embeddings"]
+            model_name = embeddings_config["model"]
+            truncate_dim = embeddings_config.get("truncate_dim")
+            model_kwargs = {"dtype": "float16"}
+            try:
+                _model = SentenceTransformer(
+                    model_name, truncate_dim=truncate_dim, local_files_only=True,
+                    model_kwargs=model_kwargs,
+                )
+            except OSError:
+                logger.info("Downloading embedding model: %s (first time)", model_name)
+                _model = SentenceTransformer(
+                    model_name, truncate_dim=truncate_dim,
+                    model_kwargs=model_kwargs,
+                )
+        return _model
 
 
 def _get_collection():
+    """Open the active collection (its vector index loads on the first query)."""
     global _collection
-    if _collection is None:
-        cfg = config.load_config()
-        client = chromadb.PersistentClient(path=collection_state.get_active_db_path())
-        _collection = client.get_collection("wikipedia")
-    return _collection
+    with _load_lock:
+        if _collection is None:
+            logger.info("Premier message : chargement de l'index ChromaDB (peut prendre une minute)...")
+            client = chromadb.PersistentClient(path=collection_state.get_active_db_path())
+            _collection = client.get_collection(collection_state.COLLECTION_NAME)
+        return _collection
 
 
 def reset_collection() -> None:
@@ -431,26 +437,14 @@ def is_available() -> bool:
 
     Returns False if the collection doesn't exist, is empty, uses
     embeddings with a different dimension, or --noindex is active.
+    Called for every message: reads the SQLite catalog, never the vector index.
     """
     if _force_unavailable:
         return False
     try:
         cfg = config.load_config()
-        db_path = Path(collection_state.get_active_db_path())
-        if not db_path.exists():
-            return False
-        client = chromadb.PersistentClient(path=str(db_path))
-        collection = client.get_collection("wikipedia")
-        if collection.count() == 0:
-            return False
         expected_dim = cfg["embeddings"].get("truncate_dim") or cfg["embeddings"].get("embedding_dim")
-        if expected_dim:
-            sample = collection.peek(limit=1)
-            if len(sample["embeddings"]) > 0:
-                actual_dim = len(sample["embeddings"][0])
-                if actual_dim != expected_dim:
-                    return False
-        return True
+        return collection_state.index_exists(expected_dim)
     except Exception as e:
         logger.warning("Index check failed: %s", e)
         return False
