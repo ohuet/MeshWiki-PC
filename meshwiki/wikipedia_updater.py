@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,41 @@ from meshwiki.zim_discovery import discover_zims
 logger = logging.getLogger(__name__)
 
 LAST_UPDATE_FILE = Path("data/last_update.json")
+
+# Kiwix dump names end with the dump date: wikipedia_fr_all_mini_2026-05.zim
+_DATED_ZIM_RE = re.compile(r"^(?P<prefix>.+)_(?P<date>\d{4}-\d{2})\.zim$")
+
+
+def _remove_older_versions(new_zim: Path) -> None:
+    """Delete older dumps of the same ZIM: identical name except an earlier date.
+
+    wikipedia_fr_all_mini_2026-05.zim replaces wikipedia_fr_all_mini_2026-02.zim,
+    but never wikipedia_fr_all_maxi_2026-02.zim nor wikipedia_fr_all_2026-02.zim.
+    """
+    match = _DATED_ZIM_RE.match(new_zim.name)
+    if not match:
+        return
+    sibling_re = re.compile(re.escape(match["prefix"]) + r"_(?P<date>\d{4}-\d{2})\.zim")
+
+    older = [
+        p for p in new_zim.parent.iterdir()
+        if p.is_file()
+        and (m := sibling_re.fullmatch(p.name))
+        and m["date"] < match["date"]
+    ]
+    if not older:
+        return
+
+    # Release the libzim handles first: Windows refuses to delete an open file
+    older_paths = {str(p) for p in older}
+    kiwix_search.set_zim_paths([p for p in discover_zims() if str(p) not in older_paths])
+
+    for p in older:
+        try:
+            p.unlink()
+            logger.info("Ancienne version du dump supprimée : %s", p.name)
+        except OSError as e:
+            logger.warning("Impossible de supprimer l'ancien dump %s : %s", p.name, e)
 
 
 def _rmtree_safe(path: str) -> None:
@@ -118,6 +154,7 @@ class WikipediaUpdater:
             if response.status_code == 416:
                 logger.info("File already fully downloaded")
                 download_path.replace(dest)
+                _remove_older_versions(dest)
                 return dest
 
             response.raise_for_status()
@@ -137,6 +174,7 @@ class WikipediaUpdater:
             # Download complete — atomically replace the old ZIM
             download_path.replace(dest)
             logger.info("Download complete: %s", dest)
+            _remove_older_versions(dest)
             return dest
 
         except requests.RequestException as e:

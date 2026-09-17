@@ -244,3 +244,118 @@ def test_download_failure_does_not_create_partial_zim(mock_get, mock_file, mock_
 
     assert result is None
     assert not (tmp_path / "wiki_2026.zim").exists()
+
+
+# --- Removal of older dump versions after a successful download ---
+
+
+def _touch(directory, *names):
+    for name in names:
+        (directory / name).write_bytes(b"zim")
+
+
+@patch("meshwiki.wikipedia_updater.discover_zims", return_value=[])
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+def test_remove_older_versions_only_same_name_older_date(mock_kiwix, mock_discover, tmp_path):
+    """Only files with the exact same name and an earlier date are deleted."""
+    _touch(
+        tmp_path,
+        "wikipedia_fr_all_mini_2026-05.zim",       # the new download
+        "wikipedia_fr_all_mini_2026-01.zim",       # older version → deleted
+        "wikipedia_fr_all_mini_2026-02.zim",       # older version → deleted
+        "wikipedia_fr_all_mini_2026-09.zim",       # newer date → kept
+        "wikipedia_fr_all_maxi_2026-01.zim",       # different variant → kept
+        "wikipedia_fr_all_2026-01.zim",            # shorter name → kept
+        "xwikipedia_fr_all_mini_2026-01.zim",      # longer name → kept
+        "wikipedia_fr_all_mini_2026-01.zim.download",  # not a .zim → kept
+        "meshwiki_reunion.zim",                    # undated → kept
+    )
+
+    updater_module._remove_older_versions(tmp_path / "wikipedia_fr_all_mini_2026-05.zim")
+
+    remaining = sorted(p.name for p in tmp_path.iterdir())
+    assert remaining == sorted([
+        "wikipedia_fr_all_mini_2026-05.zim",
+        "wikipedia_fr_all_mini_2026-09.zim",
+        "wikipedia_fr_all_maxi_2026-01.zim",
+        "wikipedia_fr_all_2026-01.zim",
+        "xwikipedia_fr_all_mini_2026-01.zim",
+        "wikipedia_fr_all_mini_2026-01.zim.download",
+        "meshwiki_reunion.zim",
+    ])
+
+
+@patch("meshwiki.wikipedia_updater.discover_zims")
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+def test_remove_older_versions_releases_kiwix_archives_first(mock_kiwix, mock_discover, tmp_path):
+    """Kiwix stops using the old dumps before they are deleted (open files can't be deleted on Windows)."""
+    _touch(tmp_path, "wiki_fr_2026-05.zim", "wiki_fr_2026-02.zim", "other.zim")
+    old, new, other = tmp_path / "wiki_fr_2026-02.zim", tmp_path / "wiki_fr_2026-05.zim", tmp_path / "other.zim"
+    mock_discover.return_value = [other, old, new]
+
+    def _check_still_present(paths):
+        assert old.exists()
+        assert [str(p) for p in paths] == [str(other), str(new)]
+
+    mock_kiwix.set_zim_paths.side_effect = _check_still_present
+
+    updater_module._remove_older_versions(new)
+
+    mock_kiwix.set_zim_paths.assert_called_once()
+    assert not old.exists()
+
+
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+def test_remove_older_versions_ignores_undated_name(mock_kiwix, tmp_path):
+    _touch(tmp_path, "wiki.zim", "wiki_2026-01.zim")
+
+    updater_module._remove_older_versions(tmp_path / "wiki.zim")
+
+    assert (tmp_path / "wiki_2026-01.zim").exists()
+    mock_kiwix.set_zim_paths.assert_not_called()
+
+
+@patch("meshwiki.wikipedia_updater.discover_zims", return_value=[])
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_download_success_removes_previous_dump(mock_get, mock_file, mock_config, mock_kiwix, mock_discover, tmp_path):
+    mock_file.exists.return_value = False
+    _touch(tmp_path, "wikipedia_fr_all_mini_2026-02.zim")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-length": "4"}
+    mock_response.iter_content.return_value = [b"data"]
+    mock_get.return_value = mock_response
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        result = updater.download_dump()
+
+    assert result == tmp_path / "wikipedia_fr_all_mini_2026-05.zim"
+    assert [p.name for p in tmp_path.iterdir()] == ["wikipedia_fr_all_mini_2026-05.zim"]
+
+
+@patch("meshwiki.wikipedia_updater.kiwix_search")
+@patch("meshwiki.config.load_config", return_value=MOCK_CONFIG)
+@patch.object(updater_module, "LAST_UPDATE_FILE")
+@patch("meshwiki.wikipedia_updater.requests.get")
+def test_download_failure_keeps_previous_dump(mock_get, mock_file, mock_config, mock_kiwix, tmp_path):
+    mock_file.exists.return_value = False
+    _touch(tmp_path, "wikipedia_fr_all_mini_2026-02.zim")
+    import requests as req
+    mock_get.side_effect = req.exceptions.ConnectionError("network down")
+
+    updater = WikipediaUpdater()
+    updater.updater_config["temp_dir"] = str(tmp_path)
+
+    with patch.object(updater, "get_latest_dump_url",
+                      return_value=("http://example.com/x.zim", "wikipedia_fr_all_mini_2026-05.zim")):
+        assert updater.download_dump() is None
+
+    assert (tmp_path / "wikipedia_fr_all_mini_2026-02.zim").exists()
